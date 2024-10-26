@@ -3,10 +3,13 @@ from enum import Enum
 import logging
 import socket
 import struct
+import time
 
 INTERFACE_NAME = "lo"
 ETHERTYPE_SV = 0x88BA
-MAX_PACKET_SIZE = 1522
+MAX_PACKET_LENGTH = 1522
+SAMPLE_LENGTH = 32
+NS_PER_SEC = 10**9
 
 
 @dataclass
@@ -192,6 +195,7 @@ class Asdu:
     svid: str
     datset: str | None
     smp_cnt: int
+    conf_rev: int
     refr_tm: UtcTime | None
     smp_synch: int
     smp_rate: int | None
@@ -235,9 +239,9 @@ def read_asdu(reader: BytesReader) -> Asdu:
         length = reader.read_definite_asn1_length()
         if length != 4:
             raise RuntimeError("Expected octet string with length 4")
-        smp_cnt_bytes = reader.sub_reader(length).read_asn1_octet_string(tag, length)
+        conf_rev_bytes = reader.sub_reader(length).read_asn1_octet_string(tag, length)
         reader.skip(length)
-        (smp_cnt,) = struct.unpack(">I", smp_cnt_bytes)
+        (conf_rev,) = struct.unpack(">I", conf_rev_bytes)
     else:
         raise RuntimeError("Expected context-specific tag with tag number 3")
 
@@ -283,7 +287,7 @@ def read_asdu(reader: BytesReader) -> Asdu:
 
     # TODO: Two more optional values
 
-    return Asdu(svid, datset, smp_cnt, refr_tm, smp_synch, smp_rate, sample)
+    return Asdu(svid, datset, smp_cnt, conf_rev, refr_tm, smp_synch, smp_rate, sample)
 
 
 @dataclass
@@ -343,6 +347,48 @@ def read_sv(reader: BytesReader) -> SavPdu:
     return savpdu
 
 
+class SampleBuffer:
+    def __init__(self, sample_rate: int):
+        self._sample_rate = sample_rate
+        self._buffer = bytearray(sample_rate * 32)
+        self._buffer_start_time_s = 0
+
+    def add_sample(self, recv_time_ns: int, asdu: Asdu):
+        ns_per_sample = NS_PER_SEC / (self._sample_rate)
+        ns_offset = asdu.smp_cnt * ns_per_sample
+
+        recv_time_s = recv_time_ns // NS_PER_SEC
+
+        if ns_offset >= recv_time_ns % NS_PER_SEC:
+            recv_time_s -= 1
+
+        if recv_time_s > self._buffer_start_time_s:
+            self._buffer_start_time_s = recv_time_s
+
+            count = 0
+            for (sample,) in struct.iter_unpack("=f", self._buffer):
+                if sample != 0:
+                    count += 1
+
+            print("flush buffer with {} non-zero samples".format(count / 8))
+
+            self._buffer = bytearray(len(self._buffer))
+
+        struct.pack_into(
+            "=8f",
+            self._buffer,
+            asdu.smp_cnt * 32,
+            asdu.sample.current_a,
+            asdu.sample.current_b,
+            asdu.sample.current_c,
+            asdu.sample.current_n,
+            asdu.sample.voltage_a,
+            asdu.sample.voltage_b,
+            asdu.sample.voltage_c,
+            asdu.sample.voltage_n,
+        )
+
+
 def main():
     logger = logging.getLogger()
     logging.basicConfig(level=logging.DEBUG)
@@ -352,37 +398,30 @@ def main():
 
         logger.info("Successfully bound socket to interface '%s'", INTERFACE_NAME)
 
-        with open("data_out.bin", "wb") as data_out:
-            while True:
-                (msg, address) = skt.recvfrom(MAX_PACKET_SIZE)
+        sample_buffer = SampleBuffer(80 * 60)
 
-                reader = BytesReader(msg)
-                _appid = reader.read_u16_be()
-                length = reader.read_u16_be()
-                _reserved_1 = reader.read_u16_be()
-                _reserved_2 = reader.read_u16_be()
+        while True:
+            (msg, address) = skt.recvfrom(MAX_PACKET_LENGTH)
+            # TODO: Timestamp should be obtained from socket using SO_TIMESTAMP or similar.
+            sample_recv_time = time.time_ns()
 
-                try:
-                    savpdu = read_sv(reader.sub_reader(length))
-                    sample = savpdu.asdus[0].sample
-                    data_out.write(
-                        struct.pack(
-                            "=8f",
-                            sample.current_a,
-                            sample.current_b,
-                            sample.current_c,
-                            sample.current_n,
-                            sample.voltage_a,
-                            sample.voltage_b,
-                            sample.voltage_c,
-                            sample.voltage_n,
-                        )
-                    )
-                except RuntimeError as err:
-                    with open("debug_dump.bin", "wb") as file:
-                        file.write(msg)
-                    err.add_note("packet has been written to debug_dump.bin")
-                    raise
+            reader = BytesReader(msg)
+            _appid = reader.read_u16_be()
+            length = reader.read_u16_be()
+            _reserved_1 = reader.read_u16_be()
+            _reserved_2 = reader.read_u16_be()
+
+            try:
+                savpdu = read_sv(reader.sub_reader(length))
+
+                for asdu in savpdu.asdus:
+                    sample_buffer.add_sample(sample_recv_time, asdu)
+
+            except RuntimeError as err:
+                with open("debug_dump.bin", "wb") as file:
+                    file.write(msg)
+                err.add_note("packet has been written to debug_dump.bin")
+                raise
 
 
 if __name__ == "__main__":
