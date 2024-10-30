@@ -4,7 +4,7 @@ import time
 
 from .bytes_reader import BytesReader
 from .packet import read_sv
-from .sample_buffer import SampleBuffer
+from .sample_buffer import SampleBufferManager
 
 INTERFACE_NAME = "lo"
 ETHERTYPE_SV = 0x88BA
@@ -16,13 +16,13 @@ def main() -> None:
     logger = logging.getLogger()
     logging.basicConfig(level=logging.DEBUG)
 
-    with open("data_out.bin", "wb") as out_file:
+    with open("data_out.bin", "wb") as out_file, open("data_out.xml", "wt") as xml_file:
         with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, ETHERTYPE_SV) as skt:
             skt.bind((INTERFACE_NAME, ETHERTYPE_SV))
 
             logger.info("Successfully bound socket to interface '%s'", INTERFACE_NAME)
 
-            sample_buffer = SampleBuffer(80 * 60, out_file)
+            sample_buffer = SampleBufferManager(80 * 60, out_file, xml_file)
 
             while True:
                 (msg, address) = skt.recvfrom(MAX_PACKET_LENGTH)
