@@ -5,6 +5,10 @@ import struct
 
 
 class BytesReader:
+    """
+    Utility class for reading bytes from a bytes-like object.
+    """
+
     def __init__(self, buffer: bytes):
         self._buffer = buffer
 

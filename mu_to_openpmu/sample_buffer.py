@@ -8,6 +8,7 @@ from .packet import Asdu, Sample
 
 NS_PER_SEC = 10**9
 
+FLUSH_WAIT_TIME = 0.001
 
 class SampleBufferChannel:
     def __init__(self, length: int):
@@ -132,6 +133,12 @@ class SampleBuffer:
 
 
 class SampleBufferManager:
+    """
+    Manager for sample buffers.
+
+    This class is responsible for holding the sample buffer, and flushing it when needed.
+    (Eventually, this will keep track of multiple buffers at once)
+    """
     def __init__(self, sample_rate: int, out_writer: BinaryIO, xml_writer: TextIO):
         self._sample_rate = sample_rate
         self._buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
@@ -139,6 +146,13 @@ class SampleBufferManager:
         self._xml_writer = xml_writer
 
     def add_sample(self, recv_time_ns: int, asdu: Asdu) -> None:
+        """
+        Add a sample to a buffer.
+
+        If the sample does not fit in the current buffer, the buffer will be flushed and a new
+        one will be created to hold the sample.
+        """
+
         ns_per_sample = NS_PER_SEC / (self._sample_rate)
         ns_offset = asdu.smp_cnt * ns_per_sample
 
@@ -147,6 +161,7 @@ class SampleBufferManager:
         if ns_offset >= recv_time_ns % NS_PER_SEC:
             recv_time_s -= 1
 
+        # If the sample does not fit in the current buffer, flush it and create a new one.
         if self._buffer.is_sample_time_after_buffer_end(recv_time_s, asdu.smp_cnt):
             self._buffer.flush(self._out_writer, self._xml_writer)
             self._buffer = SampleBuffer(
