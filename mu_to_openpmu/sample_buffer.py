@@ -8,8 +8,6 @@ from .packet import Asdu, Sample
 
 NS_PER_SEC = 10**9
 
-FLUSH_WAIT_TIME = 0.001
-
 class SampleBufferChannel:
     def __init__(self, length: int):
         self.buffer = bytearray(length * 4)
@@ -122,6 +120,16 @@ class SampleBuffer:
         for channel in self._channels:
             out_writer.write(channel.buffer)
 
+    def is_sample_within_timespan(self, seconds: int, count: int) -> bool:
+        buffer_start_time = (
+            self.start_time_s * self._sample_rate + self.sample_offset
+        )
+        buffer_end_time = buffer_start_time + self.length
+
+        sample_time = seconds * self._sample_rate + count
+
+        return buffer_start_time <= sample_time < buffer_end_time
+
     def is_sample_time_after_buffer_end(self, seconds: int, count: int) -> bool:
         buffer_end_time_in_sample_counts = (
             self.start_time_s * self._sample_rate + self.sample_offset + self.length
@@ -142,6 +150,7 @@ class SampleBufferManager:
     def __init__(self, sample_rate: int, out_writer: BinaryIO, xml_writer: TextIO):
         self._sample_rate = sample_rate
         self._buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
+        self._prev_buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
         self._out_writer = out_writer
         self._xml_writer = xml_writer
 
@@ -161,15 +170,18 @@ class SampleBufferManager:
         if ns_offset >= recv_time_ns % NS_PER_SEC:
             recv_time_s -= 1
 
-        # If the sample does not fit in the current buffer, flush it and create a new one.
-        if self._buffer.is_sample_time_after_buffer_end(recv_time_s, asdu.smp_cnt):
-            self._buffer.flush(self._out_writer, self._xml_writer)
+        if self._buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt):
+            index = asdu.smp_cnt - self._buffer.sample_offset
+            self._buffer.add_sample(index, asdu.sample)
+        elif self._prev_buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt):
+            index = asdu.smp_cnt - self._prev_buffer.sample_offset
+            self._prev_buffer.add_sample(index, asdu.sample)
+        elif self._buffer.is_sample_time_after_buffer_end(recv_time_s, asdu.smp_cnt):
+            self._prev_buffer.flush(self._out_writer, self._xml_writer)
+            self._prev_buffer = self._buffer
             self._buffer = SampleBuffer(
                 self._sample_rate,
                 recv_time_s,
                 asdu.smp_cnt // self._buffer.length * self._buffer.length,
                 self._buffer.length,
             )
-
-        index = asdu.smp_cnt - self._buffer.sample_offset
-        self._buffer.add_sample(index, asdu.sample)
