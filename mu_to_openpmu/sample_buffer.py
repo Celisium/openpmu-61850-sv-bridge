@@ -142,10 +142,15 @@ class SampleBuffer:
 
 class SampleBufferManager:
     """
-    Manager for sample buffers.
+    Manager class for sample buffers.
 
-    This class is responsible for holding the sample buffer, and flushing it when needed.
-    (Eventually, this will keep track of multiple buffers at once)
+    This class is responsible for keeping track of the current and previous sample buffers. When a
+    new sample is recevied (using the `add_sample` method), it will determine whether it can go
+    into an existing sample buffer, and if so it will store it in that buffer.
+
+    If it falls outside the timespans of the current and previous buffers, a new one will be
+    created. This is done by flushing the previous buffer and replacing it with the 'old' current
+    buffer, which is itself replaced by a newly created buffer.
     """
     def __init__(self, sample_rate: int, out_writer: BinaryIO, xml_writer: TextIO):
         self._sample_rate = sample_rate
@@ -155,13 +160,7 @@ class SampleBufferManager:
         self._xml_writer = xml_writer
 
     def add_sample(self, recv_time_ns: int, asdu: Asdu) -> None:
-        """
-        Add a sample to a buffer.
-
-        If the sample does not fit in the current buffer, the buffer will be flushed and a new
-        one will be created to hold the sample.
-        """
-
+        """Add a sample to a buffer, flushing the previous buffer if necessary."""
         ns_per_sample = NS_PER_SEC / (self._sample_rate)
         ns_offset = asdu.smp_cnt * ns_per_sample
 
