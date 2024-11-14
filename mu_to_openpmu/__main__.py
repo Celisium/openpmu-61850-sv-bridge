@@ -3,6 +3,8 @@ import logging
 import socket
 import struct
 
+import _capng as capng
+
 from .bytes_reader import BytesReader
 from .packet import read_sv
 from .sample_buffer import SampleBufferManager
@@ -34,6 +36,11 @@ def main() -> None:
 
     with open("data_out.bin", "wb") as out_file, open("data_out.xml", "wt") as xml_file:
         with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, ETHERTYPE_SV) as skt:
+
+            # Drop capabilities now that the socket has been opened.
+            capng.capng_clear(capng.CAPNG_SELECT_BOTH)
+            capng.capng_apply(capng.CAPNG_SELECT_BOTH)
+
             # Bind the socket to the chosen interface so that we only receive messages on that
             # interface.
             skt.bind((interface, ETHERTYPE_SV))
