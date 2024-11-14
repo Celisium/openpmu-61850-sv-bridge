@@ -1,7 +1,7 @@
 import base64
+import socket
 import struct
 from datetime import datetime, timezone
-from typing import BinaryIO, TextIO
 from xml.etree import ElementTree
 
 from .packet import Asdu, Sample
@@ -56,7 +56,7 @@ class SampleBuffer:
         self._channels[6].add_sample(index, sample.voltage_c)
         self._channels[7].add_sample(index, sample.voltage_n)
 
-    def flush(self, out_writer: BinaryIO, xml_writer: TextIO) -> None:
+    def flush(self, out_skt: socket.socket) -> None:
         if self.start_time_s == 0:
             return
 
@@ -114,11 +114,7 @@ class SampleBuffer:
         build_channel(2, "Belfast_Vc", "V", "c", voltage_c_max, voltage_c_data)
 
         ElementTree.indent(root_elem)
-        xml_writer.write(ElementTree.tostring(root_elem, "unicode"))
-        xml_writer.write("\n")
-
-        for channel in self._channels:
-            out_writer.write(channel.buffer)
+        out_skt.sendto(bytes(ElementTree.tostring(root_elem, "unicode"), "utf-8"), ("127.0.0.1", 48001))
 
     def is_sample_within_timespan(self, seconds: int, count: int) -> bool:
         buffer_start_time = (
@@ -152,12 +148,11 @@ class SampleBufferManager:
     created. This is done by flushing the previous buffer and replacing it with the 'old' current
     buffer, which is itself replaced by a newly created buffer.
     """
-    def __init__(self, sample_rate: int, out_writer: BinaryIO, xml_writer: TextIO):
+    def __init__(self, sample_rate: int, out_skt: socket.socket):
         self._sample_rate = sample_rate
         self._buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
         self._prev_buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
-        self._out_writer = out_writer
-        self._xml_writer = xml_writer
+        self._socket = out_skt
 
     def add_sample(self, recv_time_ns: int, asdu: Asdu) -> None:
         """Add a sample to a buffer, flushing the previous buffer if necessary."""
@@ -176,7 +171,7 @@ class SampleBufferManager:
             index = asdu.smp_cnt - self._prev_buffer.sample_offset
             self._prev_buffer.add_sample(index, asdu.sample)
         elif self._buffer.is_sample_time_after_buffer_end(recv_time_s, asdu.smp_cnt):
-            self._prev_buffer.flush(self._out_writer, self._xml_writer)
+            self._prev_buffer.flush(self._socket)
             self._prev_buffer = self._buffer
             self._buffer = SampleBuffer(
                 self._sample_rate,

@@ -34,7 +34,8 @@ def main() -> None:
     logger = logging.getLogger()
     logging.basicConfig(level=logging.DEBUG)
 
-    with open("data_out.bin", "wb") as out_file, open("data_out.xml", "wt") as xml_file:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as out_skt:
+    
         with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, ETHERTYPE_SV) as skt:
 
             # Drop capabilities now that the socket has been opened.
@@ -51,7 +52,7 @@ def main() -> None:
 
             logger.info("Successfully bound socket to interface '%s'", interface)
 
-            sample_buffer = SampleBufferManager(80 * 60, out_file, xml_file)
+            sample_buffer = SampleBufferManager(80 * 60, out_skt)
 
             while True:
                 # Read the next message from the socket.
