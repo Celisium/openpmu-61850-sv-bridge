@@ -88,8 +88,11 @@ class SampleBuffer:
         bits_elem.text = "16"
 
         channels_elem = ElementTree.SubElement(root_elem, "Channels")
-        channels_elem.text = "3"
+        channels_elem.text = "6"
 
+        (current_a_data, current_a_max) = self._channels[1].convert_to_i16()
+        (current_b_data, current_b_max) = self._channels[2].convert_to_i16()
+        (current_c_data, current_c_max) = self._channels[3].convert_to_i16()
         (voltage_a_data, voltage_a_max) = self._channels[4].convert_to_i16()
         (voltage_b_data, voltage_b_max) = self._channels[5].convert_to_i16()
         (voltage_c_data, voltage_c_max) = self._channels[6].convert_to_i16()
@@ -113,6 +116,9 @@ class SampleBuffer:
         build_channel(0, "Belfast_Va", "V", "a", voltage_a_max, voltage_a_data)
         build_channel(1, "Belfast_Vb", "V", "b", voltage_b_max, voltage_b_data)
         build_channel(2, "Belfast_Vc", "V", "c", voltage_c_max, voltage_c_data)
+        build_channel(3, "Belfast_Ia", "I", "a", current_a_max, current_a_data)
+        build_channel(4, "Belfast_Ib", "I", "b", current_b_max, current_b_data)
+        build_channel(5, "Belfast_Ic", "I", "c", current_c_max, current_c_data)
 
         ElementTree.indent(root_elem)
         out_skt.sendto(
@@ -181,3 +187,5 @@ class SampleBufferManager:
                 asdu.smp_cnt // self._buffer.length * self._buffer.length,
                 self._buffer.length,
             )
+            index = asdu.smp_cnt - self._buffer.sample_offset
+            self._buffer.add_sample(index, asdu.sample)

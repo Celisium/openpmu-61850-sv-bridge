@@ -11,8 +11,7 @@ from .sample_buffer import SampleBufferManager
 
 INTERFACE_NAME = "lo"
 ETHERTYPE_SV = 0x88BA
-MAX_PACKET_LENGTH = 1522
-SAMPLE_LENGTH = 32
+MAX_FRAME_LENGTH = 1522
 KERNEL_TIMESPEC_LENGTH = 16
 
 # Each of the timestamp socket options has an '*_OLD' and '*_NEW' variant; the '*_OLD' variant
@@ -58,7 +57,7 @@ def main() -> None:
             # The timestamps which we requested are sent as control messages (also known as
             # ancillary data). To receive these, we need to use `recvmsg` rather than 'recv'.
             (msg, anc_data, msg_flags, address) = skt.recvmsg(
-                MAX_PACKET_LENGTH, socket.CMSG_SPACE(KERNEL_TIMESPEC_LENGTH)
+                MAX_FRAME_LENGTH, socket.CMSG_SPACE(KERNEL_TIMESPEC_LENGTH)
             )
 
             # Unpack the timestamp from the control message.
