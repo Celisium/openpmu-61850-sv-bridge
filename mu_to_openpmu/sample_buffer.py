@@ -8,6 +8,7 @@ from .packet import Asdu, Sample
 
 NS_PER_SEC = 10**9
 
+
 class SampleBufferChannel:
     def __init__(self, length: int):
         self.buffer = bytearray(length * 4)
@@ -114,12 +115,12 @@ class SampleBuffer:
         build_channel(2, "Belfast_Vc", "V", "c", voltage_c_max, voltage_c_data)
 
         ElementTree.indent(root_elem)
-        out_skt.sendto(bytes(ElementTree.tostring(root_elem, "unicode"), "utf-8"), ("127.0.0.1", 48001))
+        out_skt.sendto(
+            bytes(ElementTree.tostring(root_elem, "unicode"), "utf-8"), ("127.0.0.1", 48001)
+        )
 
     def is_sample_within_timespan(self, seconds: int, count: int) -> bool:
-        buffer_start_time = (
-            self.start_time_s * self._sample_rate + self.sample_offset
-        )
+        buffer_start_time = self.start_time_s * self._sample_rate + self.sample_offset
         buffer_end_time = buffer_start_time + self.length
 
         sample_time = seconds * self._sample_rate + count
@@ -148,6 +149,7 @@ class SampleBufferManager:
     created. This is done by flushing the previous buffer and replacing it with the 'old' current
     buffer, which is itself replaced by a newly created buffer.
     """
+
     def __init__(self, sample_rate: int, out_skt: socket.socket):
         self._sample_rate = sample_rate
         self._buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
