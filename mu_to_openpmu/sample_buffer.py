@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import base64
+import collections
 import socket
 import struct
+import threading
+import time
 from datetime import datetime, timezone
 from xml.etree import ElementTree
 
@@ -47,7 +52,8 @@ class SampleBuffer:
         self.sample_offset = sample_offset
         self.length = length
 
-    def add_sample(self, index: int, sample: Sample) -> None:
+    def add_sample(self, smp_cnt: int, sample: Sample) -> None:
+        index = smp_cnt - self.sample_offset
         self._channels[0].add_sample(index, sample.current_a)
         self._channels[1].add_sample(index, sample.current_b)
         self._channels[2].add_sample(index, sample.current_c)
@@ -133,7 +139,7 @@ class SampleBuffer:
 
         return buffer_start_time <= sample_time < buffer_end_time
 
-    def is_sample_time_after_buffer_end(self, seconds: int, count: int) -> bool:
+    def is_sample_after_timespan(self, seconds: int, count: int) -> bool:
         buffer_end_time_in_sample_counts = (
             self.start_time_s * self._sample_rate + self.sample_offset + self.length
         )
@@ -141,6 +147,9 @@ class SampleBuffer:
         sample_time_in_sample_counts = seconds * self._sample_rate + count
 
         return sample_time_in_sample_counts >= buffer_end_time_in_sample_counts
+
+    def get_send_time(self) -> float:
+        return self.start_time_s + (self.sample_offset + self.length) / self._sample_rate + 0.005
 
 
 class SampleBufferManager:
@@ -156,11 +165,20 @@ class SampleBufferManager:
     buffer, which is itself replaced by a newly created buffer.
     """
 
-    def __init__(self, sample_rate: int, out_skt: socket.socket):
+    def __init__(self, sample_rate: int, buffer_length: int, out_socket: socket.socket):
         self._sample_rate = sample_rate
-        self._buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
-        self._prev_buffer = SampleBuffer(sample_rate, 0, 0, sample_rate // 120)
-        self._socket = out_skt
+        self._buffer_length = buffer_length
+
+        self._buffer_queue: collections.deque[SampleBuffer] = collections.deque()
+        self._buffer_queue_lock = threading.Lock()
+        self._buffer_queue_cond = threading.Condition(self._buffer_queue_lock)
+
+        self._socket = out_socket
+
+        self._sender_thread = threading.Thread(
+            target=self._sender_thread_fn, daemon=True
+        )
+        self._sender_thread.start()
 
     def add_sample(self, recv_time_ns: int, asdu: Asdu) -> None:
         """Add a sample to a buffer, flushing the previous buffer if necessary."""
@@ -172,20 +190,40 @@ class SampleBufferManager:
         if ns_offset >= recv_time_ns % NS_PER_SEC:
             recv_time_s -= 1
 
-        if self._buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt):
-            index = asdu.smp_cnt - self._buffer.sample_offset
-            self._buffer.add_sample(index, asdu.sample)
-        elif self._prev_buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt):
-            index = asdu.smp_cnt - self._prev_buffer.sample_offset
-            self._prev_buffer.add_sample(index, asdu.sample)
-        elif self._buffer.is_sample_time_after_buffer_end(recv_time_s, asdu.smp_cnt):
-            self._prev_buffer.flush(self._socket)
-            self._prev_buffer = self._buffer
-            self._buffer = SampleBuffer(
-                self._sample_rate,
-                recv_time_s,
-                asdu.smp_cnt // self._buffer.length * self._buffer.length,
-                self._buffer.length,
-            )
-            index = asdu.smp_cnt - self._buffer.sample_offset
-            self._buffer.add_sample(index, asdu.sample)
+        with self._buffer_queue_lock:
+            if len(self._buffer_queue) == 0 or self._buffer_queue[-1].is_sample_after_timespan(
+                recv_time_s, asdu.smp_cnt
+            ):
+                new_buffer = SampleBuffer(
+                    self._sample_rate,
+                    recv_time_s,
+                    asdu.smp_cnt // self._buffer_length * self._buffer_length,
+                    self._buffer_length,
+                )
+                new_buffer.add_sample(asdu.smp_cnt, asdu.sample)
+                self._buffer_queue.append(new_buffer)
+                self._buffer_queue_cond.notify()
+
+            else:
+                buffer = next(
+                    filter(
+                        lambda buffer: buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt),
+                        reversed(self._buffer_queue),
+                    )
+                )
+                buffer.add_sample(asdu.smp_cnt, asdu.sample)
+
+    def _sender_thread_fn(self) -> None:
+        while True:
+            with self._buffer_queue_lock:
+                self._buffer_queue_cond.wait_for(lambda: len(self._buffer_queue) > 0)
+                sleep_time = self._buffer_queue[0].get_send_time() - time.time() + 1
+
+            #print(f"sleeping for {sleep_time} seconds")
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+            with self._buffer_queue_lock:
+                buffer = self._buffer_queue.popleft()
+
+            buffer.flush(self._socket)

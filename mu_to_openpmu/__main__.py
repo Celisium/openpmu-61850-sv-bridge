@@ -50,7 +50,7 @@ def main() -> None:
 
         logger.info("Successfully bound socket to interface '%s'", interface)
 
-        sample_buffer = SampleBufferManager(80 * 60, out_skt)
+        sample_buffer = SampleBufferManager(80 * 60, 40, out_skt)
 
         while True:
             # Read the next message from the socket.

@@ -1,4 +1,3 @@
-# Needed to use BytesReader type annotation inside its own definition.
 from __future__ import annotations
 
 import struct

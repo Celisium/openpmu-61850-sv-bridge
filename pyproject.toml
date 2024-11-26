@@ -10,3 +10,7 @@ extend-select = [
 
 [tool.mypy]
 strict = true
+
+[[tool.mypy.overrides]]
+module = "_capng"
+ignore_missing_imports = true
