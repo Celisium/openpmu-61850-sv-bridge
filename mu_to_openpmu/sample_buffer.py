@@ -149,7 +149,7 @@ class SampleBuffer:
         return sample_time_in_sample_counts >= buffer_end_time_in_sample_counts
 
     def get_send_time(self) -> float:
-        return self.start_time_s + (self.sample_offset + self.length) / self._sample_rate + 0.005
+        return self.start_time_s + (self.sample_offset + self.length) / self._sample_rate + 1
 
 
 class SampleBufferManager:
@@ -205,21 +205,23 @@ class SampleBufferManager:
                 self._buffer_queue_cond.notify()
 
             else:
-                buffer = next(
-                    filter(
-                        lambda buffer: buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt),
-                        reversed(self._buffer_queue),
+                try:
+                    buffer = next(
+                        filter(
+                            lambda buffer: buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt),
+                            reversed(self._buffer_queue),
+                        )
                     )
-                )
-                buffer.add_sample(asdu.smp_cnt, asdu.sample)
+                    buffer.add_sample(asdu.smp_cnt, asdu.sample)
+                except StopIteration:
+                    pass
 
     def _sender_thread_fn(self) -> None:
         while True:
             with self._buffer_queue_lock:
                 self._buffer_queue_cond.wait_for(lambda: len(self._buffer_queue) > 0)
-                sleep_time = self._buffer_queue[0].get_send_time() - time.time() + 1
+                sleep_time = self._buffer_queue[0].get_send_time() - time.time()
 
-            #print(f"sleeping for {sleep_time} seconds")
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
