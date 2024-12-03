@@ -6,6 +6,8 @@ import time
 
 import _capng as capng
 
+import sv_parse
+
 from .bytes_reader import BytesReader
 from .packet import read_sv
 from .sample_buffer import SampleBufferManager
@@ -51,7 +53,7 @@ def main() -> None:
 
         logger.info("Successfully bound socket to interface '%s'", interface)
 
-        sample_buffer = SampleBufferManager(256 * 60, 128, out_skt)
+        sample_buffer = SampleBufferManager(80 * 60, 40, out_skt)
 
         while True:
             # Read the next message from the socket.
@@ -68,18 +70,24 @@ def main() -> None:
             (tv_sec, tv_nsec) = struct.unpack("=qq", cmsg_data)
             sample_recv_time_ns = tv_sec * 1000000000 + tv_nsec
 
-            reader = BytesReader(msg)
-
-            # Read the header of the SV message.
-            _appid = reader.read_u16_be()
-            length = reader.read_u16_be()
-            _reserved_1 = reader.read_u16_be()
-            _reserved_2 = reader.read_u16_be()
+            # reader = BytesReader(msg)
+# 
+            # # Read the header of the SV message.
+            # _appid = reader.read_u16_be()
+            # length = reader.read_u16_be()
+            # _reserved_1 = reader.read_u16_be()
+            # _reserved_2 = reader.read_u16_be()
+# 
+            # try:
+                # savpdu = read_sv(reader.sub_reader(length))
+# 
+                # for asdu in savpdu.asdus:
+                    # sample_buffer.add_sample(sample_recv_time_ns, asdu)
 
             try:
-                savpdu = read_sv(reader.sub_reader(length))
+                sv_message = sv_parse.parse(msg)
 
-                for asdu in savpdu.asdus:
+                for asdu in sv_message.asdus:
                     sample_buffer.add_sample(sample_recv_time_ns, asdu)
 
             except RuntimeError as err:

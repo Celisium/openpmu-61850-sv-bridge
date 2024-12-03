@@ -4,3 +4,4 @@
 data_out.bin
 data_out.xml
 debug_dump.bin
+*.prof

@@ -149,7 +149,7 @@ class SampleBuffer:
         return sample_time_in_sample_counts >= buffer_end_time_in_sample_counts
 
     def get_send_time(self) -> float:
-        return self.start_time_s + (self.sample_offset + self.length) / self._sample_rate + 1
+        return self.start_time_s + (self.sample_offset + self.length) / self._sample_rate + 0.005
 
 
 class SampleBufferManager:
@@ -221,6 +221,7 @@ class SampleBufferManager:
             with self._buffer_queue_lock:
                 self._buffer_queue_cond.wait_for(lambda: len(self._buffer_queue) > 0)
                 sleep_time = self._buffer_queue[0].get_send_time() - time.time()
+                #print(f"diff: {sleep_time}")
 
             if sleep_time > 0:
                 time.sleep(sleep_time)
