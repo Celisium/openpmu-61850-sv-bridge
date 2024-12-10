@@ -1,6 +1,10 @@
 mod ber;
 mod bytes;
+mod ethernet;
 
+use std::{ffi::OsStr, sync::Arc};
+
+use ethernet::EthernetSocket;
 use pyo3::prelude::*;
 
 use ber::{DecodeError, Encoding, Tag};
@@ -251,7 +255,34 @@ fn parse(bytes: &[u8]) -> PyResult<SvMessage> {
 	})
 }
 
+#[pyclass]
+#[derive(Debug, Clone)]
+struct Receiver {
+	socket: Arc<EthernetSocket>
+}
+
+#[pyfunction]
+fn create_receiver(interface: &str) -> PyResult<Receiver> {
+	let socket = EthernetSocket::new(Some(OsStr::new(interface))).unwrap();
+	Ok(Receiver { socket: Arc::new(socket) })
+}
+
+#[pyfunction]
+fn receive(py: Python<'_>, receiver: &Receiver) -> PyResult<(SvMessage, i64, u32)> {
+	py.allow_threads(|| {
+		let socket = &receiver.socket;
+		let mut buf = [0_u8; 1522];
+		let info = socket.recv(&mut buf)
+			.map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.to_string()))?;
+		parse(&buf[0..info.length])
+			.map(|msg| (msg, info.timestamp_s, info.timestamp_ns))
+	})
+}
+
 #[pymodule]
 fn sv_parse(m: &Bound<'_, PyModule>) -> PyResult<()> {
-	m.add_function(wrap_pyfunction!(parse, m)?)
+	m.add_function(wrap_pyfunction!(parse, m)?)?;
+	m.add_function(wrap_pyfunction!(receive, m)?)?;
+	m.add_function(wrap_pyfunction!(create_receiver, m)?)?;
+	Ok(())
 }

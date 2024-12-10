@@ -8,5 +8,6 @@ name = "sv_parse"
 crate-type = ["cdylib"]
 
 [dependencies]
+libc = "0.2.168"
 pyo3 = { version = "0.23.2", features = ["extension-module"] }
 thiserror = "2.0.3"
