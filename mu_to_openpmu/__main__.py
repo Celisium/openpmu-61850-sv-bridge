@@ -2,14 +2,11 @@ import argparse
 import logging
 import socket
 import struct
-import time
 
 import _capng as capng
 
 import sv_parse
 
-from .bytes_reader import BytesReader
-from .packet import read_sv
 from .sample_buffer import SampleBufferManager
 
 INTERFACE_NAME = "lo"
@@ -69,20 +66,6 @@ def main() -> None:
             (_, _, cmsg_data) = anc_data[0]
             (tv_sec, tv_nsec) = struct.unpack("=qq", cmsg_data)
             sample_recv_time_ns = tv_sec * 1000000000 + tv_nsec
-
-            # reader = BytesReader(msg)
-# 
-            # # Read the header of the SV message.
-            # _appid = reader.read_u16_be()
-            # length = reader.read_u16_be()
-            # _reserved_1 = reader.read_u16_be()
-            # _reserved_2 = reader.read_u16_be()
-# 
-            # try:
-                # savpdu = read_sv(reader.sub_reader(length))
-# 
-                # for asdu in savpdu.asdus:
-                    # sample_buffer.add_sample(sample_recv_time_ns, asdu)
 
             try:
                 sv_message = sv_parse.parse(msg)

@@ -7,9 +7,8 @@ import struct
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Any
 from xml.etree import ElementTree
-
-from .packet import Asdu, Sample
 
 NS_PER_SEC = 10**9
 
@@ -52,7 +51,7 @@ class SampleBuffer:
         self.sample_offset = sample_offset
         self.length = length
 
-    def add_sample(self, smp_cnt: int, sample: Sample) -> None:
+    def add_sample(self, smp_cnt: int, sample: Any) -> None:
         index = smp_cnt - self.sample_offset
         self._channels[0].add_sample(index, sample.current_a)
         self._channels[1].add_sample(index, sample.current_b)
@@ -180,7 +179,7 @@ class SampleBufferManager:
         )
         self._sender_thread.start()
 
-    def add_sample(self, recv_time_ns: int, asdu: Asdu) -> None:
+    def add_sample(self, recv_time_ns: int, asdu: Any) -> None:
         """Add a sample to a buffer, flushing the previous buffer if necessary."""
         ns_per_sample = NS_PER_SEC / (self._sample_rate)
         ns_offset = asdu.smp_cnt * ns_per_sample
