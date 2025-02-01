@@ -48,7 +48,6 @@ pub enum DecodeError {
 }
 
 pub fn read_identifier(reader: &mut BytesReader<'_>) -> Result<Identifier, DecodeError> {
-
 	let first_byte = reader.read_u8()?;
 
 	let encoding = if (first_byte & (1 << 5)) == 0 {
@@ -69,13 +68,13 @@ pub fn read_identifier(reader: &mut BytesReader<'_>) -> Result<Identifier, Decod
 				if (next_byte & (1 << 7)) == 0 {
 					break;
 				}
-				
+
 				if num.leading_zeros() < 7 {
 					return Err(DecodeError::TagOutOfRange);
 				}
 			}
 			num
-		},
+		}
 		num => num as u32,
 	};
 
@@ -129,7 +128,6 @@ pub fn read_length(reader: &mut BytesReader<'_>) -> Result<usize, DecodeError> {
 		value => {
 			let mut length: usize = 0;
 			for _ in 0..(value & 0b0111_1111) {
-
 				if length.leading_zeros() < 8 {
 					return Err(DecodeError::LengthOutOfRange);
 				}
@@ -138,12 +136,11 @@ pub fn read_length(reader: &mut BytesReader<'_>) -> Result<usize, DecodeError> {
 				length |= reader.read_u8()? as usize;
 			}
 			Ok(length)
-		},
+		}
 	}
 }
 
 pub fn read_integer_as_u16(reader: &mut BytesReader<'_>, encoding: Encoding) -> Result<u16, DecodeError> {
-
 	if encoding != Encoding::Primitive {
 		return Err(DecodeError::InvalidIntegerEncoding);
 	}
@@ -173,7 +170,6 @@ pub fn read_integer_as_u16(reader: &mut BytesReader<'_>, encoding: Encoding) -> 
 		// Any other valid encoding would be out of range for a u16.
 		_ => Err(DecodeError::IntegerOutOfRange),
 	}
-
 }
 
 pub fn read_octet_string<'b>(reader: &mut BytesReader<'b>, encoding: Encoding) -> Result<&'b [u8], DecodeError> {
@@ -195,8 +191,7 @@ pub fn read_visiblestring<'b>(reader: &mut BytesReader<'b>, encoding: Encoding) 
 	let bytes = reader.read_bytes(length)?;
 
 	// TODO: Confirm that this is the correct range for VisibleString.
-	let valid = bytes.iter()
-		.all(|b| (0x20..=0x7E).contains(b));
+	let valid = bytes.iter().all(|b| (0x20..=0x7E).contains(b));
 
 	if valid {
 		Ok(std::str::from_utf8(bytes).unwrap())
@@ -211,7 +206,9 @@ mod tests {
 	use super::*;
 
 	#[test]
+	#[rustfmt::skip::macros(assert_eq)]
 	fn read_identifier_valid() {
+		#[rustfmt::skip]
 		let bytes = [
 			0b00_0_01010,
 			0b01_0_10101,
@@ -264,6 +261,7 @@ mod tests {
 
 	#[test]
 	fn read_required_identifier_expected() {
+		#[rustfmt::skip]
 		let bytes = [
 			0b10_0_01010,
 			0b10_1_11111, 0x8A, 0x55,
@@ -291,6 +289,7 @@ mod tests {
 
 	#[test]
 	fn read_optional_identifier_present() {
+		#[rustfmt::skip]
 		let bytes = [
 			0b10_0_01010,
 			0b10_1_11111, 0x8A, 0x55,
@@ -321,6 +320,7 @@ mod tests {
 
 	#[test]
 	fn read_length_valid() {
+		#[rustfmt::skip]
 		let bytes = [
 			0x12,
 			0x82, 0x12, 0x34,
@@ -369,12 +369,12 @@ mod tests {
 	#[test]
 	fn read_length_invalid_length() {
 		let mut reader = BytesReader::new(&[0x85, 0x12, 0x34, 0x56, 0x78]);
-		read_length(&mut reader)
-			.expect_err("should fail when reader runs out of bytes");
+		read_length(&mut reader).expect_err("should fail when reader runs out of bytes");
 	}
 
 	#[test]
 	fn read_integer_as_u16_valid() {
+		#[rustfmt::skip]
 		let bytes = [
 			0x01, 0x12,
 			0x02, 0x34, 0x56,
@@ -397,33 +397,28 @@ mod tests {
 	#[test]
 	fn read_integer_as_u16_constructed() {
 		let mut reader = BytesReader::new(&[0x01, 0x12]);
-		read_integer_as_u16(&mut reader, Encoding::Constructed)
-			.expect_err("should fail with constructed length");
+		read_integer_as_u16(&mut reader, Encoding::Constructed).expect_err("should fail with constructed length");
 	}
 
 	#[test]
 	fn read_integer_as_u16_zero_length() {
 		let mut reader = BytesReader::new(&[0x00]);
-		read_integer_as_u16(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with length of zero");
+		read_integer_as_u16(&mut reader, Encoding::Primitive).expect_err("should fail with length of zero");
 	}
 
 	#[test]
 	fn read_integer_as_u16_overlong() {
 		let mut reader = BytesReader::new(&[0x02, 0x00, 0x12]);
-		read_integer_as_u16(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with overlong encoding");
+		read_integer_as_u16(&mut reader, Encoding::Primitive).expect_err("should fail with overlong encoding");
 
 		let mut reader = BytesReader::new(&[0x02, 0xFF, 0x89]);
-		read_integer_as_u16(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with overlong encoding");
+		read_integer_as_u16(&mut reader, Encoding::Primitive).expect_err("should fail with overlong encoding");
 	}
 
 	#[test]
 	fn read_integer_as_u16_out_of_range() {
 		let mut reader = BytesReader::new(&[0x02, 0x89, 0xAB]);
-		read_integer_as_u16(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with negative value");
+		read_integer_as_u16(&mut reader, Encoding::Primitive).expect_err("should fail with negative value");
 
 		let mut reader = BytesReader::new(&[0x03, 0x12, 0x34, 0x56]);
 		read_integer_as_u16(&mut reader, Encoding::Primitive)
@@ -433,8 +428,7 @@ mod tests {
 	#[test]
 	fn read_octet_string_valid() {
 		let mut reader = BytesReader::new(b"\x06abc\x00\x01\x02");
-		let result = read_octet_string(&mut reader, Encoding::Primitive)
-			.unwrap();
+		let result = read_octet_string(&mut reader, Encoding::Primitive).unwrap();
 		assert_eq!(result, b"abc\x00\x01\x02");
 		assert!(reader.is_empty());
 	}
@@ -442,28 +436,24 @@ mod tests {
 	#[test]
 	fn read_octet_string_invalid_length() {
 		let mut reader = BytesReader::new(b"\x07abc\x00\x01\x02");
-		read_octet_string(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with invalid length");
+		read_octet_string(&mut reader, Encoding::Primitive).expect_err("should fail with invalid length");
 	}
 
 	#[test]
 	fn read_octet_string_constructed() {
 		let mut reader = BytesReader::new(b"\x06abc\x00\x01\x02");
-		read_octet_string(&mut reader, Encoding::Constructed)
-			.expect_err("should fail with constructed tag");
+		read_octet_string(&mut reader, Encoding::Constructed).expect_err("should fail with constructed tag");
 	}
 
 	#[test]
 	fn read_visiblestring_valid() {
 		let mut reader = BytesReader::new(b"\x04test");
-		let result = read_visiblestring(&mut reader, Encoding::Primitive)
-			.unwrap();
+		let result = read_visiblestring(&mut reader, Encoding::Primitive).unwrap();
 		assert_eq!(result, "test");
 		assert!(reader.is_empty());
 
 		let mut reader = BytesReader::new(b"\x03test");
-		let result = read_visiblestring(&mut reader, Encoding::Primitive)
-			.unwrap();
+		let result = read_visiblestring(&mut reader, Encoding::Primitive).unwrap();
 		assert_eq!(result, "tes");
 		assert!(reader.skip(1).is_ok()); // There should be exactly one byte remaining.
 		assert!(reader.is_empty());
@@ -472,15 +462,13 @@ mod tests {
 	#[test]
 	fn read_visiblestring_invalid_length() {
 		let mut reader = BytesReader::new(b"\x05test");
-		read_visiblestring(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with invalid length");
+		read_visiblestring(&mut reader, Encoding::Primitive).expect_err("should fail with invalid length");
 	}
 
 	#[test]
 	fn read_visiblestring_constructed() {
 		let mut reader = BytesReader::new(b"\x04test");
-		read_visiblestring(&mut reader, Encoding::Constructed)
-			.expect_err("should fail with constructed tag");
+		read_visiblestring(&mut reader, Encoding::Constructed).expect_err("should fail with constructed tag");
 	}
 
 	#[test]
@@ -497,7 +485,6 @@ mod tests {
 
 		// Non-ASCII characters
 		let mut reader = BytesReader::new(b"\x05caf\xC3\xA9"); // 'café' in UTF-8
-		read_visiblestring(&mut reader, Encoding::Primitive)
-			.expect_err("should fail with non-ASCII characters");
+		read_visiblestring(&mut reader, Encoding::Primitive).expect_err("should fail with non-ASCII characters");
 	}
 }

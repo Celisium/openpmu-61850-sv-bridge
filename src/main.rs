@@ -71,10 +71,9 @@ impl Sample {
 			return Err(DecodeError::InvalidIntegerEncoding);
 		}
 
-		let mut values_iter = bytes.chunks_exact(8)
-			.map(|chunk| {
-				i32::from_be_bytes(chunk[0..4].try_into().unwrap()) as f64
-			});
+		let mut values_iter = bytes
+			.chunks_exact(8)
+			.map(|chunk| i32::from_be_bytes(chunk[0..4].try_into().unwrap()) as f64);
 
 		let current_scale = 0.001;
 		let voltage_scale = 0.01;
@@ -106,7 +105,6 @@ struct Asdu {
 }
 
 fn read_asdu(reader: &mut BytesReader<'_>) -> Result<Asdu, DecodeError> {
-
 	// svID [0] IMPLICIT VisibleString
 	let svid = ber::read_required_identifier(reader, Tag::ContextSpecific(0))
 		.and_then(|encoding| ber::read_visiblestring(reader, encoding))?;
@@ -164,7 +162,6 @@ fn read_asdu(reader: &mut BytesReader<'_>) -> Result<Asdu, DecodeError> {
 }
 
 fn read_savpdu(reader: &mut BytesReader<'_>) -> Result<Vec<Asdu>, DecodeError> {
-
 	// noASDU [0] IMPLICIT INTEGER (1..65535)
 	let encoding = ber::read_required_identifier(reader, Tag::ContextSpecific(0))?;
 	let no_asdu = ber::read_integer_as_u16(reader, encoding)?;
@@ -191,7 +188,6 @@ fn read_savpdu(reader: &mut BytesReader<'_>) -> Result<Vec<Asdu>, DecodeError> {
 			read_asdu(&mut inner_reader.take_sub_reader(length)?)
 		})
 		.collect::<Result<Vec<_>, _>>()
-
 }
 
 #[derive(Debug, Clone)]
@@ -219,10 +215,7 @@ fn parse(bytes: &[u8]) -> anyhow::Result<SvMessage> {
 	reader.limit(length)?;
 	let asdus = read_savpdu(&mut reader)?;
 
-	Ok(SvMessage {
-		appid,
-		asdus,
-	})
+	Ok(SvMessage { appid, asdus })
 }
 
 #[derive(Debug, Parser)]
@@ -234,7 +227,6 @@ struct CommandLineArgs {
 }
 
 fn main() -> anyhow::Result<()> {
-
 	let args = CommandLineArgs::parse();
 
 	let recv_socket = EthernetSocket::new(Some(&args.interface))?;
@@ -245,7 +237,8 @@ fn main() -> anyhow::Result<()> {
 
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 
-	let mut sample_buffer_manager = SampleBufferManager::new(args.sample_rate, (args.sample_rate / 100) as usize, send_socket);
+	let mut sample_buffer_manager =
+		SampleBufferManager::new(args.sample_rate, (args.sample_rate / 100) as usize, send_socket);
 
 	loop {
 		let info = recv_socket.recv(&mut buf)?;
@@ -254,5 +247,4 @@ fn main() -> anyhow::Result<()> {
 			sample_buffer_manager.add_sample(info.timestamp_s, info.timestamp_ns, asdu);
 		}
 	}
-
 }

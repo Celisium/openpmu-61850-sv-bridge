@@ -12,7 +12,6 @@ pub enum BytesReaderError {
 }
 
 impl<'b> BytesReader<'b> {
-
 	pub fn new(bytes: &'b [u8]) -> Self {
 		Self { bytes }
 	}
@@ -22,7 +21,10 @@ impl<'b> BytesReader<'b> {
 	}
 
 	pub fn read_bytes(&mut self, length: usize) -> Result<&'b [u8], BytesReaderError> {
-		let (read, remaining) = self.bytes.split_at_checked(length).ok_or(BytesReaderError::EndOfBuffer)?;
+		let (read, remaining) = self
+			.bytes
+			.split_at_checked(length)
+			.ok_or(BytesReaderError::EndOfBuffer)?;
 		self.bytes = remaining;
 		Ok(read)
 	}
@@ -162,15 +164,23 @@ mod tests {
 		assert_eq!(sub_reader.read_bytes(1), Err(BytesReaderError::EndOfBuffer));
 		assert_eq!(sub_reader.read_bytes(0), Ok(b"".as_slice()));
 
-		reader.peek_sub_reader(6).expect_err("should fail with partially out of bounds length");
-		reader.take_sub_reader(6).expect_err("should fail with partially out of bounds length");
+		reader
+			.peek_sub_reader(6)
+			.expect_err("should fail with partially out of bounds length");
+		reader
+			.take_sub_reader(6)
+			.expect_err("should fail with partially out of bounds length");
 
 		let mut sub_reader = reader.peek_sub_reader(5).unwrap();
 		assert_eq!(sub_reader.read_bytes(5), Ok(b" test".as_slice()));
 		assert_eq!(reader.read_bytes(5), Ok(b" test".as_slice()));
 
-		reader.peek_sub_reader(1).expect_err("should fail with fully out of bounds length");
-		reader.take_sub_reader(1).expect_err("should fail with fully out of bounds length");
+		reader
+			.peek_sub_reader(1)
+			.expect_err("should fail with fully out of bounds length");
+		reader
+			.take_sub_reader(1)
+			.expect_err("should fail with fully out of bounds length");
 
 		reader.peek_sub_reader(0).expect("should succeed with zero length");
 		reader.take_sub_reader(0).expect("should succeed with zero length");
@@ -204,5 +214,4 @@ mod tests {
 		assert_eq!(reader.read_u16_be(), Ok(0x1234));
 		assert_eq!(reader.read_u16_be(), Err(BytesReaderError::EndOfBuffer));
 	}
-
 }

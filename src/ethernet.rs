@@ -12,8 +12,7 @@ const ETHERTYPE_SV: u16 = 0x88BA;
 /// Obtains the index of the network interface with the given name.
 fn interface_name_to_index(name: &OsStr) -> std::io::Result<c_uint> {
 	// `if_nametoindex` expects a null terminated string.
-	let c_name = CString::new(name.as_bytes())
-		.map_err(|_| std::io::ErrorKind::InvalidInput)?;
+	let c_name = CString::new(name.as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
 
 	let index = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
 	// `if_nametoindex` returns 0 on error, with the error code in `errno`.
@@ -39,13 +38,11 @@ pub struct EthernetSocket {
 }
 
 impl EthernetSocket {
-
 	/// Creates an Ethernet socket which receives Ethernet frames containing sampled value messages.
-	/// 
+	///
 	/// If `interface` is `None`, Ethernet frames will be received from all network interfaces. Otherwise, frames will
 	/// only be received on the specified interface.
 	pub fn new(interface: Option<&OsStr>) -> std::io::Result<Self> {
-
 		let socket = unsafe {
 			libc::socket(
 				// The `AF_PACKET` domain is used for Ethernet frames (see the `packet(7)` man page).
@@ -63,15 +60,12 @@ impl EthernetSocket {
 			return Err(std::io::Error::last_os_error());
 		}
 
-		let interface_index = interface
-			.map(interface_name_to_index)
-			.transpose()?
-			.unwrap_or(0);
+		let interface_index = interface.map(interface_name_to_index).transpose()?.unwrap_or(0);
 
 		let address = libc::sockaddr_ll {
 			sll_family: libc::AF_PACKET as c_ushort, // Always `AF_PACKET`.
-			sll_protocol: ETHERTYPE_SV.to_be(), // Ethertype can also be specified here, for some reason.
-			sll_ifindex: interface_index as c_int, // The interface to receive from. For `bind`, 0 means any interface.
+			sll_protocol: ETHERTYPE_SV.to_be(),      // Ethertype can also be specified here, for some reason.
+			sll_ifindex: interface_index as c_int,   // The interface to receive from. For `bind`, 0 means any interface.
 			// Remaining fields are not used for `bind`.
 			sll_hatype: 0,
 			sll_pkttype: 0,
@@ -117,10 +111,9 @@ impl EthernetSocket {
 
 	/// Receives a single Ethernet frame on the socket. The frame's payload will be written to `buf`, while its length
 	/// and timestamp are returned in the `RecvInfo` structure.
-	/// 
+	///
 	/// This function will block until a frame is received.
 	pub fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvInfo> {
-
 		// This matches Linux's `__kernel_timespec` type, which uses 64 bit fields even on 32 bit systems.
 		#[repr(C)]
 		struct KernelTimespec {
@@ -179,11 +172,9 @@ impl EthernetSocket {
 		// This is probably a bit overkill, since the timestamp control message should be the only one present.
 		let mut cmsg: *const libc::cmsghdr = unsafe { libc::CMSG_FIRSTHDR(&raw const msg) };
 		while !cmsg.is_null() {
-
 			let cmsg_hdr = unsafe { &*cmsg };
 
 			if cmsg_hdr.cmsg_level == libc::SOL_SOCKET && cmsg_hdr.cmsg_type == libc::SO_TIMESTAMPNS_NEW {
-
 				let timestamp_ptr = unsafe { libc::CMSG_DATA(cmsg) } as *const KernelTimespec;
 				// The pointer to the control message data is not guaranteed to be aligned.
 				let timestamp = unsafe { timestamp_ptr.read_unaligned() };

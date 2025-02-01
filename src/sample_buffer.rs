@@ -4,7 +4,7 @@ use std::{
 	net::UdpSocket,
 	sync::{Arc, Condvar, Mutex},
 	thread::JoinHandle,
-	time::{Duration, SystemTime, UNIX_EPOCH}
+	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use base64::Engine;
@@ -21,10 +21,7 @@ pub struct SampleBufferChannel {
 impl SampleBufferChannel {
 	pub fn new(length: usize) -> Self {
 		let buffer = vec![0.0; length].into_boxed_slice();
-		Self {
-			buffer,
-			max: 0.0,
-		}
+		Self { buffer, max: 0.0 }
 	}
 
 	pub fn add_sample(&mut self, index: usize, value: f32) {
@@ -43,12 +40,7 @@ pub struct SampleBuffer {
 }
 
 impl SampleBuffer {
-	pub fn new(
-		sample_rate: u32,
-		start_time_s: i64,
-		sample_offset: usize,
-		length: usize,
-	) -> Self {
+	pub fn new(sample_rate: u32, start_time_s: i64, sample_offset: usize, length: usize) -> Self {
 		let channels = std::array::from_fn(|_| SampleBufferChannel::new(length));
 		Self {
 			channels,
@@ -84,7 +76,10 @@ impl SampleBuffer {
 		writeln!(&mut buf, "<OpenPMU>")?;
 		writeln!(&mut buf, "\t<Format>Samples</Format>")?;
 		writeln!(&mut buf, "\t<Date>{}</Date>", start_time_utc.date())?;
-		writeln!(&mut buf, "\t<Time>{hours:02}:{minutes:02}:{seconds:02}.{microseconds:06}</Time>")?;
+		writeln!(
+			&mut buf,
+			"\t<Time>{hours:02}:{minutes:02}:{seconds:02}.{microseconds:06}</Time>"
+		)?;
 		writeln!(&mut buf, "\t<Frame>{frame}</Frame>")?;
 		writeln!(&mut buf, "\t<Fs>{}</Fs>", self.sample_rate)?;
 		writeln!(&mut buf, "\t<n>{}</n>", self.length)?;
@@ -99,7 +94,6 @@ impl SampleBuffer {
 			phase: &str,
 			channel: &SampleBufferChannel,
 		) -> anyhow::Result<()> {
-
 			writeln!(buf, "\t<Channel_{index}>")?;
 			writeln!(buf, "\t\t<Name>{name}</Name>")?;
 			writeln!(buf, "\t\t<Type>{type_}</Type>")?;
@@ -145,7 +139,8 @@ impl SampleBuffer {
 	}
 
 	pub fn is_sample_after_timespan(&self, seconds: i64, count: u32) -> bool {
-		let buffer_end_time = self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64 + self.length as i64;
+		let buffer_end_time =
+			self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64 + self.length as i64;
 		let sample_time = seconds * self.sample_rate as i64 + count as i64;
 		sample_time >= buffer_end_time
 	}
@@ -172,9 +167,7 @@ pub struct SampleBufferManager {
 const NS_PER_SEC: f64 = 1_000_000_000.0;
 
 impl SampleBufferManager {
-
 	pub fn new(sample_rate: u32, buffer_length: usize, out_socket: UdpSocket) -> Self {
-	
 		let shared = Arc::new(SampleBufferManagerState {
 			buffer_queue: Mutex::new(VecDeque::new()),
 			buffer_queue_cond: Condvar::new(),
@@ -192,7 +185,6 @@ impl SampleBufferManager {
 	}
 
 	pub fn add_sample(&mut self, mut recv_time_s: i64, recv_time_ns: u32, asdu: Asdu) {
-
 		let ns_per_sample = NS_PER_SEC / self.sample_rate as f64;
 		let ns_offset = asdu.smp_cnt as f64 * ns_per_sample;
 
@@ -201,13 +193,21 @@ impl SampleBufferManager {
 		}
 
 		let mut queue = self.shared.buffer_queue.lock().unwrap();
-		if queue.back().map_or(true, |buffer| buffer.is_sample_after_timespan(recv_time_s, asdu.smp_cnt as u32)) {
-			let mut new_buffer = SampleBuffer::new(self.sample_rate, recv_time_s, asdu.smp_cnt as usize / self.buffer_length * self.buffer_length, self.buffer_length);
+		if queue.back().map_or(true, |buffer| {
+			buffer.is_sample_after_timespan(recv_time_s, asdu.smp_cnt as u32)
+		}) {
+			let mut new_buffer = SampleBuffer::new(
+				self.sample_rate,
+				recv_time_s,
+				asdu.smp_cnt as usize / self.buffer_length * self.buffer_length,
+				self.buffer_length,
+			);
 			new_buffer.add_sample(asdu.smp_cnt as usize, asdu.sample);
 			queue.push_back(new_buffer);
 			self.shared.buffer_queue_cond.notify_one();
 		} else {
-			let buffer = queue.iter_mut()
+			let buffer = queue
+				.iter_mut()
 				.rev()
 				.find(|buffer| buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt as u32));
 
@@ -215,18 +215,18 @@ impl SampleBufferManager {
 				buffer.add_sample(asdu.smp_cnt as usize, asdu.sample);
 			}
 		}
-
 	}
 
 	fn sender_thread_fn(state: Arc<SampleBufferManagerState>, out_socket: UdpSocket) {
 		loop {
 			let sleep_time = {
-				let queue = state.buffer_queue_cond.wait_while(
-					state.buffer_queue.lock().unwrap(),
-					|queue| queue.is_empty()
-				).unwrap();
+				let queue = state
+					.buffer_queue_cond
+					.wait_while(state.buffer_queue.lock().unwrap(), |queue| queue.is_empty())
+					.unwrap();
 
-				queue.front().unwrap().get_send_time() - SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
+				queue.front().unwrap().get_send_time()
+					- SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
 			};
 
 			if sleep_time > 0.0 {
@@ -240,7 +240,5 @@ impl SampleBufferManager {
 
 			buffer.flush(&out_socket).unwrap();
 		}
-
 	}
-
 }
