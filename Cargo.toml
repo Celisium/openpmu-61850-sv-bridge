@@ -1,0 +1,12 @@
+[package]
+name = "mu_rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.94"
+base64 = "0.22.1"
+clap = { version = "4.5.23", features = ["derive"] }
+libc = "0.2.168"
+thiserror = "2.0.3"
+time = "0.3.37"
