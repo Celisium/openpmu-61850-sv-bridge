@@ -10,36 +10,64 @@ use std::{
 use base64::Engine;
 use time::OffsetDateTime;
 
-use crate::{Asdu, Sample};
+use crate::{Asdu, Sample, NOMINAL_FREQUENCY};
 
+// TODO: Terminology is somewhat inconsistent e.g. 'buffer' refers to both the buffer field in SampleBufferChannel and
+//       the SampleBuffer struct (which contains several channels).
+// TODO: Separate type for sample timestamps.
+// TODO: Rename add_sample to insert_sample.
+
+/// A struct containing sample data for a single channel in a sample buffer. The `SampleBuffer` struct contains one
+/// `SampleBufferChannel` for each voltage or current channel.
+/// 
+/// This struct also keeps track of the largest absolute value currently stored in the buffer. This avoids the need to
+/// search through the entire buffer later.
 #[derive(Debug)]
 pub struct SampleBufferChannel {
+	/// Array of sample data for this channel.
 	buffer: Box<[f32]>,
+	/// The largest absolute value stored in this channel buffer.
 	max: f32,
 }
 
 impl SampleBufferChannel {
+	/// Creates a new sample buffer channel containing `length` samples, with each sample initialised to zero.
 	pub fn new(length: usize) -> Self {
 		let buffer = vec![0.0; length].into_boxed_slice();
 		Self { buffer, max: 0.0 }
 	}
 
+	/// Inserts a sample at the specified index in the buffer, updating the `max` field if necessary.
+	/// TODO: What should happen if samples are inserted at the same position multiple times? Simply overwriting may
+	///       cause `max` to be incorrect.
 	pub fn add_sample(&mut self, index: usize, value: f32) {
 		self.buffer[index] = value;
 		self.max = self.max.max(value.abs());
 	}
 }
 
+/// A struct containing sample data corresponding to a particular period of time.
+/// 
+/// 
 #[derive(Debug)]
 pub struct SampleBuffer {
 	channels: [SampleBufferChannel; 8],
+	/// The number of samples corresponding to one second; equivalently, the reciprocal of the time between each sample
+	/// in seconds.
 	sample_rate: u32,
+	/// The integer part of the timestamp corresponding to the first sample in the buffer.
 	start_time_s: i64,
+	/// The fractional part of the timestamp corresponding to the first sample in the buffer, as a multiple of the
+	/// sample period.
 	sample_offset: usize,
+	/// The number of samples in the buffer. The end time of the buffer can be calculated by multiplying this number by
+	/// `sample_rate`.
 	length: usize,
 }
 
 impl SampleBuffer {
+	/// Creates a new sample buffer with the specified start time, length and sample rate. All samples are initialised
+	/// to zero.
 	pub fn new(sample_rate: u32, start_time_s: i64, sample_offset: usize, length: usize) -> Self {
 		let channels = std::array::from_fn(|_| SampleBufferChannel::new(length));
 		Self {
@@ -51,6 +79,7 @@ impl SampleBuffer {
 		}
 	}
 
+	/// Insert a sample into the buffer at the specified position.
 	pub fn add_sample(&mut self, smp_cnt: usize, sample: Sample) {
 		let index = smp_cnt - self.sample_offset;
 		self.channels[0].add_sample(index, sample.current_a);
@@ -63,12 +92,15 @@ impl SampleBuffer {
 		self.channels[7].add_sample(index, sample.voltage_n);
 	}
 
+	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
+	/// TODO: Allow specifying destination
+	/// TODO: Specific error type.
 	pub fn flush(&self, out_skt: &UdpSocket) -> anyhow::Result<()> {
 		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time_s).unwrap()
 			+ Duration::from_secs_f32(self.sample_offset as f32 / self.sample_rate as f32);
 
 		// TODO: Support nominal frequencies other than 50 Hz.
-		let frame = self.sample_offset * 100 / self.sample_rate as usize;
+		let frame = self.sample_offset * (NOMINAL_FREQUENCY as usize * 2) / self.sample_rate as usize;
 
 		let (hours, minutes, seconds, microseconds) = start_time_utc.time().as_hms_micro();
 
@@ -131,6 +163,7 @@ impl SampleBuffer {
 		Ok(())
 	}
 
+	/// Given a sample timestamp, determines if it falls within this buffer's timespan.
 	pub fn is_sample_within_timespan(&self, seconds: i64, count: u32) -> bool {
 		let buffer_start_time = self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64;
 		let buffer_end_time = buffer_start_time + self.length as i64;
@@ -138,6 +171,7 @@ impl SampleBuffer {
 		buffer_start_time <= sample_time && sample_time < buffer_end_time
 	}
 
+	/// Given a sample timestamp, determines if it comes after the end of this buffer's timespan.
 	pub fn is_sample_after_timespan(&self, seconds: i64, count: u32) -> bool {
 		let buffer_end_time =
 			self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64 + self.length as i64;
@@ -145,6 +179,7 @@ impl SampleBuffer {
 		sample_time >= buffer_end_time
 	}
 
+	/// Calculates the time at which this buffer should be sent.
 	pub fn get_send_time(&self) -> f64 {
 		self.start_time_s as f64 + (self.sample_offset + self.length) as f64 / self.sample_rate as f64 + 0.005
 	}

@@ -226,6 +226,8 @@ struct CommandLineArgs {
 	sample_rate: u32,
 }
 
+const NOMINAL_FREQUENCY: u32 = 50;
+
 fn main() -> anyhow::Result<()> {
 	let args = CommandLineArgs::parse();
 
@@ -238,7 +240,7 @@ fn main() -> anyhow::Result<()> {
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 
 	let mut sample_buffer_manager =
-		SampleBufferManager::new(args.sample_rate, (args.sample_rate / 100) as usize, send_socket);
+		SampleBufferManager::new(args.sample_rate, (args.sample_rate / (NOMINAL_FREQUENCY * 2)) as usize, send_socket);
 
 	loop {
 		let info = recv_socket.recv(&mut buf)?;
