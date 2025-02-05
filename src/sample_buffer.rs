@@ -14,8 +14,29 @@ use crate::{Asdu, Sample, NOMINAL_FREQUENCY};
 
 // TODO: Terminology is somewhat inconsistent e.g. 'buffer' refers to both the buffer field in SampleBufferChannel and
 //       the SampleBuffer struct (which contains several channels).
-// TODO: Separate type for sample timestamps.
-// TODO: Rename add_sample to insert_sample.
+
+/// A timestamp represented as the number of sample periods since 1 January 1970 00:00:00 UTC.
+/// This value is only meaningful with a known sample rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SampleTime(u64);
+
+impl SampleTime {
+	pub fn from_seconds_and_samples(seconds: u64, samples: u32, sample_rate: u32) -> Self {
+		Self(seconds * sample_rate as u64 + samples as u64)
+	}
+	pub fn seconds(self, sample_rate: u32) -> u64 {
+		self.0 / sample_rate as u64
+	}
+	pub fn samples(self, sample_rate: u32) -> u32 {
+		(self.0 % sample_rate as u64) as u32
+	}
+	pub fn add_samples(self, samples: u32) -> Self {
+		Self(self.0 + samples as u64)
+	}
+	pub fn to_secs_f64(self, sample_rate: u32) -> f64 {
+		self.0 as f64 / sample_rate as f64
+	}
+}
 
 /// A struct containing sample data for a single channel in a sample buffer. The `SampleBuffer` struct contains one
 /// `SampleBufferChannel` for each voltage or current channel.
@@ -40,67 +61,64 @@ impl SampleBufferChannel {
 	/// Inserts a sample at the specified index in the buffer, updating the `max` field if necessary.
 	/// TODO: What should happen if samples are inserted at the same position multiple times? Simply overwriting may
 	///       cause `max` to be incorrect.
-	pub fn add_sample(&mut self, index: usize, value: f32) {
-		self.buffer[index] = value;
+	pub fn insert_sample(&mut self, index: u32, value: f32) {
+		self.buffer[index as usize] = value;
 		self.max = self.max.max(value.abs());
 	}
 }
 
+const SEND_DELAY: f64 = 0.005;
+
 /// A struct containing sample data corresponding to a particular period of time.
-/// 
-/// 
 #[derive(Debug)]
 pub struct SampleBuffer {
+	/// The sample data, split into individual channels.
 	channels: [SampleBufferChannel; 8],
-	/// The number of samples corresponding to one second; equivalently, the reciprocal of the time between each sample
-	/// in seconds.
+	/// The sample rate of the samples in the buffer.
 	sample_rate: u32,
-	/// The integer part of the timestamp corresponding to the first sample in the buffer.
-	start_time_s: i64,
-	/// The fractional part of the timestamp corresponding to the first sample in the buffer, as a multiple of the
-	/// sample period.
-	sample_offset: usize,
-	/// The number of samples in the buffer. The end time of the buffer can be calculated by multiplying this number by
+	/// The timestamp corresponding to the first sample in the buffer.
+	start_time: SampleTime,
+	/// The number of samples in the buffer. The buffer's end time can be calculated by multiplying this number by
 	/// `sample_rate`.
-	length: usize,
+	length: u32,
 }
 
 impl SampleBuffer {
 	/// Creates a new sample buffer with the specified start time, length and sample rate. All samples are initialised
 	/// to zero.
-	pub fn new(sample_rate: u32, start_time_s: i64, sample_offset: usize, length: usize) -> Self {
-		let channels = std::array::from_fn(|_| SampleBufferChannel::new(length));
+	pub fn new(sample_rate: u32, start_time: SampleTime, length: u32) -> Self {
+		let channels = std::array::from_fn(|_| SampleBufferChannel::new(length as usize));
 		Self {
 			channels,
 			sample_rate,
-			start_time_s,
-			sample_offset,
+			start_time,
 			length,
 		}
 	}
 
 	/// Insert a sample into the buffer at the specified position.
-	pub fn add_sample(&mut self, smp_cnt: usize, sample: Sample) {
-		let index = smp_cnt - self.sample_offset;
-		self.channels[0].add_sample(index, sample.current_a);
-		self.channels[1].add_sample(index, sample.current_b);
-		self.channels[2].add_sample(index, sample.current_c);
-		self.channels[3].add_sample(index, sample.current_n);
-		self.channels[4].add_sample(index, sample.voltage_a);
-		self.channels[5].add_sample(index, sample.voltage_b);
-		self.channels[6].add_sample(index, sample.voltage_c);
-		self.channels[7].add_sample(index, sample.voltage_n);
+	pub fn insert_sample(&mut self, smp_cnt: u32, sample: Sample) {
+		let index = smp_cnt - self.start_time.samples(self.sample_rate);
+		self.channels[0].insert_sample(index, sample.current_a);
+		self.channels[1].insert_sample(index, sample.current_b);
+		self.channels[2].insert_sample(index, sample.current_c);
+		self.channels[3].insert_sample(index, sample.current_n);
+		self.channels[4].insert_sample(index, sample.voltage_a);
+		self.channels[5].insert_sample(index, sample.voltage_b);
+		self.channels[6].insert_sample(index, sample.voltage_c);
+		self.channels[7].insert_sample(index, sample.voltage_n);
 	}
 
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
 	/// TODO: Allow specifying destination
 	/// TODO: Specific error type.
 	pub fn flush(&self, out_skt: &UdpSocket) -> anyhow::Result<()> {
-		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time_s).unwrap()
-			+ Duration::from_secs_f32(self.sample_offset as f32 / self.sample_rate as f32);
+		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.seconds(self.sample_rate) as i64)?
+			+ Duration::from_secs_f32(self.start_time.samples(self.sample_rate) as f32 / self.sample_rate as f32);
 
 		// TODO: Support nominal frequencies other than 50 Hz.
-		let frame = self.sample_offset * (NOMINAL_FREQUENCY as usize * 2) / self.sample_rate as usize;
+		// TODO: Actually, this can probably be changed to start.samples / length
+		let frame = self.start_time.samples(self.sample_rate) * (NOMINAL_FREQUENCY * 2) / self.sample_rate;
 
 		let (hours, minutes, seconds, microseconds) = start_time_utc.time().as_hms_micro();
 
@@ -164,24 +182,18 @@ impl SampleBuffer {
 	}
 
 	/// Given a sample timestamp, determines if it falls within this buffer's timespan.
-	pub fn is_sample_within_timespan(&self, seconds: i64, count: u32) -> bool {
-		let buffer_start_time = self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64;
-		let buffer_end_time = buffer_start_time + self.length as i64;
-		let sample_time = seconds * self.sample_rate as i64 + count as i64;
-		buffer_start_time <= sample_time && sample_time < buffer_end_time
+	pub fn is_sample_within_timespan(&self, timestamp: SampleTime) -> bool {
+		timestamp >= self.start_time && timestamp < self.start_time.add_samples(self.length)
 	}
 
 	/// Given a sample timestamp, determines if it comes after the end of this buffer's timespan.
-	pub fn is_sample_after_timespan(&self, seconds: i64, count: u32) -> bool {
-		let buffer_end_time =
-			self.start_time_s * self.sample_rate as i64 + self.sample_offset as i64 + self.length as i64;
-		let sample_time = seconds * self.sample_rate as i64 + count as i64;
-		sample_time >= buffer_end_time
+	pub fn is_sample_after_timespan(&self, timestamp: SampleTime) -> bool {
+		timestamp >= self.start_time.add_samples(self.length)
 	}
 
 	/// Calculates the time at which this buffer should be sent.
 	pub fn get_send_time(&self) -> f64 {
-		self.start_time_s as f64 + (self.sample_offset + self.length) as f64 / self.sample_rate as f64 + 0.005
+		self.start_time.add_samples(self.length).to_secs_f64(self.sample_rate) + SEND_DELAY
 	}
 }
 
@@ -194,7 +206,7 @@ struct SampleBufferManagerState {
 #[derive(Debug)]
 pub struct SampleBufferManager {
 	sample_rate: u32,
-	buffer_length: usize,
+	buffer_length: u32,
 	shared: Arc<SampleBufferManagerState>,
 	_sender_thread: JoinHandle<()>,
 }
@@ -202,7 +214,7 @@ pub struct SampleBufferManager {
 const NS_PER_SEC: f64 = 1_000_000_000.0;
 
 impl SampleBufferManager {
-	pub fn new(sample_rate: u32, buffer_length: usize, out_socket: UdpSocket) -> Self {
+	pub fn new(sample_rate: u32, buffer_length: u32, out_socket: UdpSocket) -> Self {
 		let shared = Arc::new(SampleBufferManagerState {
 			buffer_queue: Mutex::new(VecDeque::new()),
 			buffer_queue_cond: Condvar::new(),
@@ -219,7 +231,7 @@ impl SampleBufferManager {
 		}
 	}
 
-	pub fn add_sample(&mut self, mut recv_time_s: i64, recv_time_ns: u32, asdu: Asdu) {
+	pub fn add_sample(&mut self, mut recv_time_s: u64, recv_time_ns: u32, asdu: Asdu) {
 		let ns_per_sample = NS_PER_SEC / self.sample_rate as f64;
 		let ns_offset = asdu.smp_cnt as f64 * ns_per_sample;
 
@@ -227,27 +239,32 @@ impl SampleBufferManager {
 			recv_time_s -= 1;
 		}
 
+		let timestamp = SampleTime::from_seconds_and_samples(recv_time_s, asdu.smp_cnt as u32, self.sample_rate);
+
 		let mut queue = self.shared.buffer_queue.lock().unwrap();
 		if queue.back().map_or(true, |buffer| {
-			buffer.is_sample_after_timespan(recv_time_s, asdu.smp_cnt as u32)
+			buffer.is_sample_after_timespan(timestamp)
 		}) {
 			let mut new_buffer = SampleBuffer::new(
 				self.sample_rate,
-				recv_time_s,
-				asdu.smp_cnt as usize / self.buffer_length * self.buffer_length,
+				SampleTime::from_seconds_and_samples(
+					recv_time_s,
+					asdu.smp_cnt as u32 / self.buffer_length * self.buffer_length,
+					self.sample_rate,
+				),
 				self.buffer_length,
 			);
-			new_buffer.add_sample(asdu.smp_cnt as usize, asdu.sample);
+			new_buffer.insert_sample(asdu.smp_cnt as u32, asdu.sample);
 			queue.push_back(new_buffer);
 			self.shared.buffer_queue_cond.notify_one();
 		} else {
 			let buffer = queue
 				.iter_mut()
 				.rev()
-				.find(|buffer| buffer.is_sample_within_timespan(recv_time_s, asdu.smp_cnt as u32));
+				.find(|buffer| buffer.is_sample_within_timespan(timestamp));
 
 			if let Some(buffer) = buffer {
-				buffer.add_sample(asdu.smp_cnt as usize, asdu.sample);
+				buffer.insert_sample(asdu.smp_cnt as u32, asdu.sample);
 			}
 		}
 	}

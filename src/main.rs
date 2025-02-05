@@ -240,13 +240,14 @@ fn main() -> anyhow::Result<()> {
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 
 	let mut sample_buffer_manager =
-		SampleBufferManager::new(args.sample_rate, (args.sample_rate / (NOMINAL_FREQUENCY * 2)) as usize, send_socket);
+		SampleBufferManager::new(args.sample_rate, args.sample_rate / (NOMINAL_FREQUENCY * 2), send_socket);
 
 	loop {
 		let info = recv_socket.recv(&mut buf)?;
 		let sv_message = parse(&buf[0..info.length])?;
 		for asdu in sv_message.asdus {
-			sample_buffer_manager.add_sample(info.timestamp_s, info.timestamp_ns, asdu);
+			assert!(info.timestamp_s >= 0); // TODO: handle correctly (probably just ignore sample entirely)
+			sample_buffer_manager.add_sample(info.timestamp_s as u64, info.timestamp_ns, asdu);
 		}
 	}
 }
