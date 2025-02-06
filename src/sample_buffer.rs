@@ -10,30 +10,53 @@ use std::{
 use base64::Engine;
 use time::OffsetDateTime;
 
-use crate::{Asdu, Sample, NOMINAL_FREQUENCY};
+use crate::{Asdu, Sample};
 
 // TODO: Terminology is somewhat inconsistent e.g. 'buffer' refers to both the buffer field in SampleBufferChannel and
 //       the SampleBuffer struct (which contains several channels).
 
-/// A timestamp represented as the number of sample periods since 1 January 1970 00:00:00 UTC.
-/// This value is only meaningful with a known sample rate.
+/// A timestamp represented as the number of sample periods since the Unix epoch (1970-01-01 00:00:00 UTC).
+/// (See the note below about leap seconds, however.)
+///
+/// This representation allows sample times to be represented exactly, even when the sample period is not a nice
+/// fraction of one second (e.g. with a rate of 4800 Hz).
+///
+/// Some things to be aware of are:
+/// - The value is only meaningful with a known sample rate.
+/// - Since the value is unsigned, any time before the epoch cannot be represented.
+/// - The value *probably* does not include those which occur during leap seconds. The handling of leap seconds is a
+///   bit of a mess on Unix-like systems, as Unix time is defined as the number of *non-leap* seconds since the epoch,
+///   meaning that timestamps such as 2016-12-31 23:59:60 cannot be represented. Since these timestamps are likely
+///   derived from the system clock, this caveat applies to them as well. This issue is further compounded by the fact
+///   that some users may have their system clock configured such that it *does* include leap seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SampleTime(u64);
 
 impl SampleTime {
+	/// Creates a new `SampleTime` from the specified number of seconds since the Unix epoch, plus the specified number of
+	/// sample periods. The number of seconds is converted to sample periods using the specified sample rate.
 	pub fn from_seconds_and_samples(seconds: u64, samples: u32, sample_rate: u32) -> Self {
 		Self(seconds * sample_rate as u64 + samples as u64)
 	}
-	pub fn seconds(self, sample_rate: u32) -> u64 {
+
+	/// Gets the number of whole seconds since the Unix epoch, assuming the specified number of samples per second.
+	pub fn as_secs(self, sample_rate: u32) -> u64 {
 		self.0 / sample_rate as u64
 	}
-	pub fn samples(self, sample_rate: u32) -> u32 {
+
+	/// Gets the sub-second portion of the timestamp in sample periods, assuming the specified number of samples per
+	/// second.
+	pub fn subsec_samples(self, sample_rate: u32) -> u32 {
 		(self.0 % sample_rate as u64) as u32
 	}
+
+	/// Calculates a new `SampleTime` by adding the specified number of samples to this `SampleTime`.
 	pub fn add_samples(self, samples: u32) -> Self {
 		Self(self.0 + samples as u64)
 	}
-	pub fn to_secs_f64(self, sample_rate: u32) -> f64 {
+
+	/// Returns the number of seconds since the Unix epoch, including the fractional portion, as an `f64`.
+	pub fn as_secs_f64(self, sample_rate: u32) -> f64 {
 		self.0 as f64 / sample_rate as f64
 	}
 }
@@ -98,7 +121,7 @@ impl SampleBuffer {
 
 	/// Insert a sample into the buffer at the specified position.
 	pub fn insert_sample(&mut self, smp_cnt: u32, sample: Sample) {
-		let index = smp_cnt - self.start_time.samples(self.sample_rate);
+		let index = smp_cnt - self.start_time.subsec_samples(self.sample_rate);
 		self.channels[0].insert_sample(index, sample.current_a);
 		self.channels[1].insert_sample(index, sample.current_b);
 		self.channels[2].insert_sample(index, sample.current_c);
@@ -113,12 +136,10 @@ impl SampleBuffer {
 	/// TODO: Allow specifying destination
 	/// TODO: Specific error type.
 	pub fn flush(&self, out_skt: &UdpSocket) -> anyhow::Result<()> {
-		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.seconds(self.sample_rate) as i64)?
-			+ Duration::from_secs_f32(self.start_time.samples(self.sample_rate) as f32 / self.sample_rate as f32);
+		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.as_secs(self.sample_rate) as i64)?
+			+ Duration::from_secs_f32(self.start_time.subsec_samples(self.sample_rate) as f32 / self.sample_rate as f32);
 
-		// TODO: Support nominal frequencies other than 50 Hz.
-		// TODO: Actually, this can probably be changed to start.samples / length
-		let frame = self.start_time.samples(self.sample_rate) * (NOMINAL_FREQUENCY * 2) / self.sample_rate;
+		let frame = self.start_time.subsec_samples(self.sample_rate) / self.length;
 
 		let (hours, minutes, seconds, microseconds) = start_time_utc.time().as_hms_micro();
 
@@ -193,7 +214,7 @@ impl SampleBuffer {
 
 	/// Calculates the time at which this buffer should be sent.
 	pub fn get_send_time(&self) -> f64 {
-		self.start_time.add_samples(self.length).to_secs_f64(self.sample_rate) + SEND_DELAY
+		self.start_time.add_samples(self.length).as_secs_f64(self.sample_rate) + SEND_DELAY
 	}
 }
 
@@ -231,7 +252,7 @@ impl SampleBufferManager {
 		}
 	}
 
-	pub fn add_sample(&mut self, mut recv_time_s: u64, recv_time_ns: u32, asdu: Asdu) {
+	pub fn insert_sample(&mut self, mut recv_time_s: u64, recv_time_ns: u32, asdu: Asdu) {
 		let ns_per_sample = NS_PER_SEC / self.sample_rate as f64;
 		let ns_offset = asdu.smp_cnt as f64 * ns_per_sample;
 

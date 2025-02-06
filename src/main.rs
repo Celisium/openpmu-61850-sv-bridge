@@ -247,7 +247,7 @@ fn main() -> anyhow::Result<()> {
 		let sv_message = parse(&buf[0..info.length])?;
 		for asdu in sv_message.asdus {
 			assert!(info.timestamp_s >= 0); // TODO: handle correctly (probably just ignore sample entirely)
-			sample_buffer_manager.add_sample(info.timestamp_s as u64, info.timestamp_ns, asdu);
+			sample_buffer_manager.insert_sample(info.timestamp_s as u64, info.timestamp_ns, asdu);
 		}
 	}
 }
