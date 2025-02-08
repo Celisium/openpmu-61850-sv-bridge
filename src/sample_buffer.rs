@@ -63,7 +63,7 @@ impl SampleTime {
 
 /// A struct containing sample data for a single channel in a sample buffer. The `SampleBuffer` struct contains one
 /// `SampleBufferChannel` for each voltage or current channel.
-/// 
+///
 /// This struct also keeps track of the largest absolute value currently stored in the buffer. This avoids the need to
 /// search through the entire buffer later.
 #[derive(Debug)]
@@ -139,7 +139,9 @@ impl SampleBuffer {
 	/// TODO: Specific error type.
 	pub fn flush(&self, out_skt: &UdpSocket) -> anyhow::Result<()> {
 		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.as_secs(self.sample_rate) as i64)?
-			+ Duration::from_secs_f32(self.start_time.subsec_samples(self.sample_rate) as f32 / self.sample_rate as f32);
+			+ Duration::from_secs_f32(
+				self.start_time.subsec_samples(self.sample_rate) as f32 / self.sample_rate as f32,
+			);
 
 		let frame = self.start_time.subsec_samples(self.sample_rate) / self.length;
 
@@ -265,9 +267,10 @@ impl SampleBufferManager {
 		let timestamp = SampleTime::from_seconds_and_samples(recv_time_s, asdu.smp_cnt as u32, self.sample_rate);
 
 		let mut queue = self.shared.buffer_queue.lock().unwrap();
-		if queue.back().map_or(true, |buffer| {
-			buffer.is_sample_after_timespan(timestamp)
-		}) {
+		if queue
+			.back()
+			.map_or(true, |buffer| buffer.is_sample_after_timespan(timestamp))
+		{
 			let mut new_buffer = SampleBuffer::new(
 				self.sample_rate,
 				SampleTime::from_seconds_and_samples(
@@ -324,7 +327,6 @@ mod tests {
 
 	#[test]
 	fn smp_cnt_out_of_range() {
-
 		let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
 		let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
 
@@ -341,6 +343,5 @@ mod tests {
 		};
 
 		sample_buffer_manager.insert_sample(1_000_000_000, 156255, asdu);
-
 	}
 }
