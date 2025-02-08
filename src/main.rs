@@ -51,7 +51,7 @@ fn read_iec61850_utctime(reader: &mut BytesReader<'_>, encoding: Encoding) -> Re
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Sample {
 	current_a: f32,
 	current_b: f32,

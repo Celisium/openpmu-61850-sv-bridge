@@ -122,14 +122,16 @@ impl SampleBuffer {
 	/// Insert a sample into the buffer at the specified position.
 	pub fn insert_sample(&mut self, smp_cnt: u32, sample: Sample) {
 		let index = smp_cnt - self.start_time.subsec_samples(self.sample_rate);
-		self.channels[0].insert_sample(index, sample.current_a);
-		self.channels[1].insert_sample(index, sample.current_b);
-		self.channels[2].insert_sample(index, sample.current_c);
-		self.channels[3].insert_sample(index, sample.current_n);
-		self.channels[4].insert_sample(index, sample.voltage_a);
-		self.channels[5].insert_sample(index, sample.voltage_b);
-		self.channels[6].insert_sample(index, sample.voltage_c);
-		self.channels[7].insert_sample(index, sample.voltage_n);
+		if index < self.length {
+			self.channels[0].insert_sample(index, sample.current_a);
+			self.channels[1].insert_sample(index, sample.current_b);
+			self.channels[2].insert_sample(index, sample.current_c);
+			self.channels[3].insert_sample(index, sample.current_n);
+			self.channels[4].insert_sample(index, sample.voltage_a);
+			self.channels[5].insert_sample(index, sample.voltage_b);
+			self.channels[6].insert_sample(index, sample.voltage_c);
+			self.channels[7].insert_sample(index, sample.voltage_n);
+		}
 	}
 
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
@@ -313,5 +315,32 @@ impl SampleBufferManager {
 
 			buffer.flush(&out_socket).unwrap();
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn smp_cnt_out_of_range() {
+
+		let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+		let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
+
+		let asdu = Asdu {
+			svid: "4000".into(),
+			datset: None,
+			smp_cnt: 4000,
+			conf_rev: 0,
+			refr_tm: None,
+			smp_synch: 0,
+			smp_rate: None,
+			sample: Sample::default(),
+			smp_mod: None,
+		};
+
+		sample_buffer_manager.insert_sample(1_000_000_000, 156255, asdu);
+
 	}
 }
