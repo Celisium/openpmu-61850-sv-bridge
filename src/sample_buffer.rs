@@ -2,7 +2,10 @@ use std::{
 	collections::VecDeque,
 	fmt::Write,
 	net::UdpSocket,
-	sync::{Arc, Condvar, Mutex},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc, Condvar, Mutex,
+	},
 	thread::JoinHandle,
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -226,6 +229,7 @@ impl SampleBuffer {
 struct SampleBufferManagerState {
 	buffer_queue: Mutex<VecDeque<SampleBuffer>>,
 	buffer_queue_cond: Condvar,
+	done: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -233,7 +237,7 @@ pub struct SampleBufferManager {
 	sample_rate: u32,
 	buffer_length: u32,
 	shared: Arc<SampleBufferManagerState>,
-	_sender_thread: JoinHandle<()>,
+	sender_thread: Option<JoinHandle<()>>,
 }
 
 const NS_PER_SEC: f64 = 1_000_000_000.0;
@@ -243,16 +247,19 @@ impl SampleBufferManager {
 		let shared = Arc::new(SampleBufferManagerState {
 			buffer_queue: Mutex::new(VecDeque::new()),
 			buffer_queue_cond: Condvar::new(),
+			done: AtomicBool::new(false),
 		});
 
 		let sender_shared = shared.clone();
-		let sender_thread = std::thread::spawn(move || Self::sender_thread_fn(sender_shared, out_socket));
+		let sender_thread = Some(std::thread::spawn(move || {
+			Self::sender_thread_fn(sender_shared, out_socket)
+		}));
 
 		Self {
 			sample_rate,
 			buffer_length,
 			shared,
-			_sender_thread: sender_thread,
+			sender_thread,
 		}
 	}
 
@@ -300,8 +307,14 @@ impl SampleBufferManager {
 			let sleep_time = {
 				let queue = state
 					.buffer_queue_cond
-					.wait_while(state.buffer_queue.lock().unwrap(), |queue| queue.is_empty())
+					.wait_while(state.buffer_queue.lock().unwrap(), |queue| {
+						queue.is_empty() && !state.done.load(Ordering::SeqCst)
+					})
 					.unwrap();
+
+				if state.done.load(Ordering::SeqCst) {
+					break;
+				}
 
 				queue.front().unwrap().get_send_time()
 					- SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
@@ -318,6 +331,14 @@ impl SampleBufferManager {
 
 			buffer.flush(&out_socket).unwrap();
 		}
+	}
+}
+
+impl Drop for SampleBufferManager {
+	fn drop(&mut self) {
+		self.shared.done.store(true, Ordering::SeqCst);
+		self.shared.buffer_queue_cond.notify_one();
+		let _ = self.sender_thread.take().unwrap().join();
 	}
 }
 
