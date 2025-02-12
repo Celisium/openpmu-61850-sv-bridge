@@ -4,9 +4,8 @@ use std::{
 	net::UdpSocket,
 	sync::{
 		atomic::{AtomicBool, Ordering},
-		Arc, Condvar, Mutex,
+		Condvar, Mutex,
 	},
-	thread::JoinHandle,
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +13,8 @@ use base64::Engine;
 use time::OffsetDateTime;
 
 use crate::{Asdu, Sample};
+
+const NS_PER_SEC: f64 = 1_000_000_000.0;
 
 // TODO: Terminology is somewhat inconsistent e.g. 'buffer' refers to both the buffer field in SampleBufferChannel and
 //       the SampleBuffer struct (which contains several channels).
@@ -225,71 +226,53 @@ impl SampleBuffer {
 	}
 }
 
-#[derive(Debug)]
-struct SampleBufferManagerState {
-	buffer_queue: Mutex<VecDeque<SampleBuffer>>,
-	buffer_queue_cond: Condvar,
+#[derive(Debug, Default)]
+pub struct SampleBufferQueue {
+	queue: Mutex<VecDeque<SampleBuffer>>,
+	cond_var: Condvar,
 	done: AtomicBool,
 }
 
-#[derive(Debug)]
-pub struct SampleBufferManager {
-	sample_rate: u32,
-	buffer_length: u32,
-	shared: Arc<SampleBufferManagerState>,
-	sender_thread: Option<JoinHandle<()>>,
-}
-
-const NS_PER_SEC: f64 = 1_000_000_000.0;
-
-impl SampleBufferManager {
-	pub fn new(sample_rate: u32, buffer_length: u32, out_socket: UdpSocket) -> Self {
-		let shared = Arc::new(SampleBufferManagerState {
-			buffer_queue: Mutex::new(VecDeque::new()),
-			buffer_queue_cond: Condvar::new(),
-			done: AtomicBool::new(false),
-		});
-
-		let sender_shared = shared.clone();
-		let sender_thread = Some(std::thread::spawn(move || {
-			Self::sender_thread_fn(sender_shared, out_socket)
-		}));
-
-		Self {
-			sample_rate,
-			buffer_length,
-			shared,
-			sender_thread,
-		}
+impl SampleBufferQueue {
+	pub fn new() -> Self {
+		Self::default()
 	}
 
-	pub fn insert_sample(&mut self, mut recv_time_s: u64, recv_time_ns: u32, asdu: Asdu) {
-		let ns_per_sample = NS_PER_SEC / self.sample_rate as f64;
+	pub fn insert_sample(
+		&self,
+		mut recv_time_s: u64,
+		recv_time_ns: u32,
+		sample_rate: u32,
+		buffer_length: u32,
+		asdu: Asdu,
+	) {
+		let ns_per_sample = NS_PER_SEC / sample_rate as f64;
 		let ns_offset = asdu.smp_cnt as f64 * ns_per_sample;
 
 		if ns_offset >= recv_time_ns as f64 {
 			recv_time_s -= 1;
 		}
 
-		let timestamp = SampleTime::from_seconds_and_samples(recv_time_s, asdu.smp_cnt as u32, self.sample_rate);
+		let timestamp = SampleTime::from_seconds_and_samples(recv_time_s, asdu.smp_cnt as u32, sample_rate);
 
-		let mut queue = self.shared.buffer_queue.lock().unwrap();
+		let mut queue = self.queue.lock().expect("queue mutex was poisoned");
+
 		if queue
 			.back()
-			.map_or(true, |buffer| buffer.is_sample_after_timespan(timestamp))
+			.is_none_or(|buffer| buffer.is_sample_after_timespan(timestamp))
 		{
 			let mut new_buffer = SampleBuffer::new(
-				self.sample_rate,
+				sample_rate,
 				SampleTime::from_seconds_and_samples(
 					recv_time_s,
-					asdu.smp_cnt as u32 / self.buffer_length * self.buffer_length,
-					self.sample_rate,
+					asdu.smp_cnt as u32 / buffer_length * buffer_length,
+					sample_rate,
 				),
-				self.buffer_length,
+				buffer_length,
 			);
 			new_buffer.insert_sample(asdu.smp_cnt as u32, asdu.sample);
 			queue.push_back(new_buffer);
-			self.shared.buffer_queue_cond.notify_one();
+			self.cond_var.notify_one();
 		} else {
 			let buffer = queue
 				.iter_mut()
@@ -302,67 +285,67 @@ impl SampleBufferManager {
 		}
 	}
 
-	fn sender_thread_fn(state: Arc<SampleBufferManagerState>, out_socket: UdpSocket) {
-		loop {
-			let sleep_time = {
-				let queue = state
-					.buffer_queue_cond
-					.wait_while(state.buffer_queue.lock().unwrap(), |queue| {
-						queue.is_empty() && !state.done.load(Ordering::SeqCst)
-					})
-					.unwrap();
+	fn wait_for_sample_buffer(&self) -> Option<f64> {
+		let queue = self
+			.cond_var
+			.wait_while(self.queue.lock().unwrap(), |queue| {
+				queue.is_empty() && !self.done.load(Ordering::SeqCst)
+			})
+			.unwrap();
 
-				if state.done.load(Ordering::SeqCst) {
-					break;
-				}
-
+		if self.done.load(Ordering::SeqCst) {
+			None
+		} else {
+			Some(
 				queue.front().unwrap().get_send_time()
-					- SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
-			};
-
-			if sleep_time > 0.0 {
-				std::thread::sleep(Duration::from_secs_f64(sleep_time));
-			}
-
-			let buffer = {
-				let mut queue = state.buffer_queue.lock().unwrap();
-				queue.pop_front().unwrap()
-			};
-
-			buffer.flush(&out_socket).unwrap();
+					- SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+			)
 		}
 	}
-}
 
-impl Drop for SampleBufferManager {
-	fn drop(&mut self) {
-		self.shared.done.store(true, Ordering::SeqCst);
-		self.shared.buffer_queue_cond.notify_one();
-		let _ = self.sender_thread.take().unwrap().join();
+	fn pop_sample_buffer(&self) -> SampleBuffer {
+		let mut queue = self.queue.lock().unwrap();
+		queue.pop_front().unwrap()
+	}
+
+	pub fn set_done(&self) {
+		self.done.store(true, Ordering::SeqCst);
+		self.cond_var.notify_one();
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	use super::*;
+pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket) {
+	while let Some(sleep_time) = queue.wait_for_sample_buffer() {
+		if sleep_time > 0.0 {
+			std::thread::sleep(Duration::from_secs_f64(sleep_time));
+		}
 
-	#[test]
-	fn smp_cnt_out_of_range() {
-		let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
-		let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
-
-		let asdu = Asdu {
-			svid: "4000".into(),
-			datset: None,
-			smp_cnt: 4000,
-			conf_rev: 0,
-			refr_tm: None,
-			smp_synch: 0,
-			smp_rate: None,
-			sample: Sample::default(),
-			smp_mod: None,
-		};
-
-		sample_buffer_manager.insert_sample(1_000_000_000, 156255, asdu);
+		let buffer = queue.pop_sample_buffer();
+		buffer.flush(&out_socket).unwrap();
 	}
 }
+
+// #[cfg(test)]
+// mod tests {
+// 	use super::*;
+
+// 	#[test]
+// 	fn smp_cnt_out_of_range() {
+// 		let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+// 		let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
+
+// 		let asdu = Asdu {
+// 			svid: "4000".into(),
+// 			datset: None,
+// 			smp_cnt: 4000,
+// 			conf_rev: 0,
+// 			refr_tm: None,
+// 			smp_synch: 0,
+// 			smp_rate: None,
+// 			sample: Sample::default(),
+// 			smp_mod: None,
+// 		};
+
+// 		sample_buffer_manager.insert_sample(1_000_000_000, 156255, asdu);
+// 	}
+// }

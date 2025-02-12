@@ -1,12 +1,10 @@
 #![no_main]
 
-use std::net::UdpSocket;
-
 use libfuzzer_sys::{
 	arbitrary::{Arbitrary, Unstructured},
 	fuzz_target,
 };
-use mu_rust::{sample_buffer::SampleBufferManager, Asdu, Sample};
+use mu_rust::{sample_buffer::SampleBufferQueue, Asdu, Sample};
 
 #[derive(Debug)]
 struct AsduWrapper(Asdu);
@@ -37,13 +35,15 @@ impl Arbitrary<'_> for AsduWrapper {
 }
 
 fuzz_target!(|data: Vec<AsduWrapper>| {
-	let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
-	let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
+	let sample_rate = 4000;
+	let buffer_length = 40;
+
+	let sample_buffer_queue = SampleBufferQueue::new();
 
 	let mut ns = 156255;
 
 	for AsduWrapper(asdu) in data {
-		sample_buffer_manager.insert_sample(1_000_000_000, ns, asdu);
+		sample_buffer_queue.insert_sample(1_000_000_000, ns, sample_rate, buffer_length, asdu);
 		ns += 1000;
 	}
 });
