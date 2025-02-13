@@ -1,7 +1,7 @@
 use std::{
 	collections::VecDeque,
 	fmt::Write,
-	net::UdpSocket,
+	net::{SocketAddr, UdpSocket},
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		Condvar, Mutex,
@@ -139,9 +139,8 @@ impl SampleBuffer {
 	}
 
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
-	/// TODO: Allow specifying destination
 	/// TODO: Specific error type.
-	pub fn flush(&self, out_skt: &UdpSocket) -> anyhow::Result<()> {
+	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr) -> anyhow::Result<()> {
 		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.as_secs(self.sample_rate) as i64)?
 			+ Duration::from_secs_f32(
 				self.start_time.subsec_samples(self.sample_rate) as f32 / self.sample_rate as f32,
@@ -206,7 +205,7 @@ impl SampleBuffer {
 
 		writeln!(&mut buf, "</OpenPMU>")?;
 
-		out_skt.send_to(buf.as_bytes(), ("127.0.0.1", 48001))?;
+		out_skt.send_to(buf.as_bytes(), dest)?;
 		Ok(())
 	}
 
@@ -314,14 +313,14 @@ impl SampleBufferQueue {
 	}
 }
 
-pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket) {
+pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket, dest: SocketAddr) {
 	while let Some(sleep_time) = queue.wait_for_sample_buffer() {
 		if sleep_time > 0.0 {
 			std::thread::sleep(Duration::from_secs_f64(sleep_time));
 		}
 
 		let buffer = queue.pop_sample_buffer();
-		buffer.flush(&out_socket).unwrap();
+		buffer.flush(&out_socket, dest).unwrap();
 	}
 }
 

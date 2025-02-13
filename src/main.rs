@@ -1,6 +1,7 @@
 use std::{
 	ffi::OsString,
-	net::{Ipv4Addr, UdpSocket},
+	net::{Ipv4Addr, SocketAddr, UdpSocket},
+	str::FromStr as _,
 };
 
 use clap::Parser;
@@ -33,11 +34,12 @@ fn main() -> anyhow::Result<()> {
 	let buffer_length = args.sample_rate / (NOMINAL_FREQUENCY * 2);
 
 	let send_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+	let destination = SocketAddr::from_str("127.0.0.1:48001").unwrap();
 
 	let sample_buffer_queue = SampleBufferQueue::new();
 
 	std::thread::scope(|scope| {
-		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket));
+		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, destination));
 		loop {
 			let info = recv_socket.recv(&mut buf)?;
 			let sv_message = parse(&buf[0..info.length])?;
