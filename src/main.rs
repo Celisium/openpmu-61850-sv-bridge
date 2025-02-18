@@ -1,7 +1,6 @@
 use std::{
 	ffi::OsString,
 	net::{Ipv4Addr, SocketAddr, UdpSocket},
-	str::FromStr as _,
 };
 
 use clap::Parser;
@@ -17,12 +16,29 @@ struct CommandLineArgs {
 	interface: OsString,
 	#[arg(short = 'r', long, default_value = "4000")]
 	sample_rate: u32,
+	#[arg(short = 'f', long)]
+	nominal_freq: Option<u32>,
+	#[arg(short = 'd', long, default_value = "127.0.0.1:48001")]
+	dest: SocketAddr,
 }
-
-const NOMINAL_FREQUENCY: u32 = 50;
 
 fn main() -> anyhow::Result<()> {
 	let args = CommandLineArgs::parse();
+
+	let nominal_freq = match (args.nominal_freq, args.sample_rate) {
+		(Some(nominal_freq), _) => nominal_freq,
+		(None, 4000 | 12800) => 50,
+		(None, 4800 | 15360) => 60,
+		_ => {
+			eprintln!("Unable to guess nominal frequency from the sample rate ({} Hz).", args.sample_rate);
+			eprintln!("The nominal frequency can be specified using the `--nominal-freq` option.");
+			return Ok(()); // TODO: Return error code instead.
+		},
+	};
+
+	if args.nominal_freq.is_none() {
+		eprintln!("Nominal frequency was not specified; assuming {nominal_freq} Hz based on sample rate.");
+	}
 
 	let recv_socket = EthernetSocket::new(Some(&args.interface))?;
 
@@ -30,16 +46,16 @@ fn main() -> anyhow::Result<()> {
 
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 
-	let sample_rate = args.sample_rate;
-	let buffer_length = args.sample_rate / (NOMINAL_FREQUENCY * 2);
+	let buffer_length = args.sample_rate / (nominal_freq * 2);
 
 	let send_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
-	let destination = SocketAddr::from_str("127.0.0.1:48001").unwrap();
 
 	let sample_buffer_queue = SampleBufferQueue::new();
 
+	eprintln!("Datagrams will be sent to {}.", &args.dest);
+
 	std::thread::scope(|scope| {
-		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, destination));
+		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, args.dest));
 		loop {
 			let info = recv_socket.recv(&mut buf)?;
 			let sv_message = parse(&buf[0..info.length])?;
@@ -48,7 +64,7 @@ fn main() -> anyhow::Result<()> {
 				sample_buffer_queue.insert_sample(
 					info.timestamp_s as u64,
 					info.timestamp_ns,
-					sample_rate,
+					args.sample_rate,
 					buffer_length,
 					asdu,
 				);
