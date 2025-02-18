@@ -23,6 +23,8 @@ struct CommandLineArgs {
 }
 
 fn main() -> anyhow::Result<()> {
+	env_logger::init();
+
 	let args = CommandLineArgs::parse();
 
 	let nominal_freq = match (args.nominal_freq, args.sample_rate) {
@@ -30,19 +32,19 @@ fn main() -> anyhow::Result<()> {
 		(None, 4000 | 12800) => 50,
 		(None, 4800 | 15360) => 60,
 		_ => {
-			eprintln!("Unable to guess nominal frequency from the sample rate ({} Hz).", args.sample_rate);
-			eprintln!("The nominal frequency can be specified using the `--nominal-freq` option.");
-			return Ok(()); // TODO: Return error code instead.
+			log::error!("Unable to guess nominal frequency from the sample rate ({} Hz).", args.sample_rate);
+			log::error!("The nominal frequency can be specified using the `--nominal-freq` option.");
+			std::process::exit(1);
 		},
 	};
 
 	if args.nominal_freq.is_none() {
-		eprintln!("Nominal frequency was not specified; assuming {nominal_freq} Hz based on sample rate.");
+		log::warn!("Nominal frequency was not specified; assuming {nominal_freq} Hz based on sample rate.");
 	}
 
 	let recv_socket = EthernetSocket::new(Some(&args.interface))?;
 
-	eprintln!("Bound socket to interface '{}'.", &args.interface.to_string_lossy());
+	log::info!("Bound socket to interface '{}'.", &args.interface.to_string_lossy());
 
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 
@@ -52,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
 	let sample_buffer_queue = SampleBufferQueue::new();
 
-	eprintln!("Datagrams will be sent to {}.", &args.dest);
+	log::info!("Datagrams will be sent to {}.", &args.dest);
 
 	std::thread::scope(|scope| {
 		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, args.dest));
