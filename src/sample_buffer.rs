@@ -10,7 +10,6 @@ use std::{
 };
 
 use base64::Engine;
-use time::OffsetDateTime;
 
 use crate::{Asdu, Sample};
 
@@ -63,6 +62,63 @@ impl SampleTime {
 	pub fn as_secs_f64(self, sample_rate: u32) -> f64 {
 		self.0 as f64 / sample_rate as f64
 	}
+
+	/// Converts this timestamp into a Gregorian calendar date and time. Returns a tuple containing the year, month,
+	/// day, hours, minutes, seconds and microseconds, in that order. The values for the day and month start at 1.
+	pub fn to_date_time(self, sample_rate: u32) -> (u32, u32, u32, u32, u32, u32, u32) {
+		// This implementation is based on the formulas presented in the book 'Calendrical Calculations' by Edward M.
+		// Reingold and Nachum Dershowitz.
+		// TODO: A more efficient algorithm could be used.
+
+		let date = self.0 / (86400 * sample_rate as u64) + fixed_from_gregorian(1970, 1, 1);
+
+		let d_0 = date - 1;
+		let n_400 = d_0 / 146097;
+		let d_1 = d_0 % 146097;
+		let n_100 = d_1 / 36524;
+		let d_2 = d_1 % 36524;
+		let n_4 = d_2 / 1461;
+		let d_3 = d_2 % 1461;
+		let n_1 = d_3 / 365;
+		let year = 400 * n_400 + 100 * n_100 + 4 * n_4 + n_1 + if n_100 == 4 || n_4 == 4 { 0 } else { 1 };
+
+		let prior_days = date - fixed_from_gregorian(year, 1, 1);
+		let correction = if date < fixed_from_gregorian(year, 3, 1) {
+			0
+		} else if is_gregorian_leap_year(year) {
+			1
+		} else {
+			2
+		};
+
+		let month = (12 * (prior_days + correction) + 373) / 367;
+		let day = date - fixed_from_gregorian(year, month, 1) + 1;
+
+		let time = (self.0 % (86400 * sample_rate as u64) / sample_rate as u64) as u32;
+		let hours = time / 3600;
+		let minutes = time % 3600 / 60;
+		let seconds = time % 60;
+
+		let microseconds = ((self.0 % sample_rate as u64) as f32 / sample_rate as f32 * 1_000_000.0) as u32;
+
+		(year as u32, month as u32, day as u32, hours, minutes, seconds, microseconds)
+	}
+}
+
+fn is_gregorian_leap_year(year: u64) -> bool {
+	year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+/// Converts a date in the Gregorian calendar to the number of days since 0001-01-01 in the proleptic Gregorian
+/// calendar.
+fn fixed_from_gregorian(year: u64, month: u64, day: u64) -> u64 {
+	365 * (year - 1)
+		+ (year - 1) / 4
+		- (year - 1) / 100
+		+ (year - 1) / 400
+		+ (367 * month - 362) / 12
+		+ day
+		- if month <= 2 { 0 } else if is_gregorian_leap_year(year) { 1 } else { 2 }
 }
 
 /// A struct containing sample data for a single channel in a sample buffer. The `SampleBuffer` struct contains one
@@ -141,19 +197,14 @@ impl SampleBuffer {
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
 	/// TODO: Specific error type.
 	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr) -> anyhow::Result<()> {
-		let start_time_utc = OffsetDateTime::from_unix_timestamp(self.start_time.as_secs(self.sample_rate) as i64)?
-			+ Duration::from_secs_f32(
-				self.start_time.subsec_samples(self.sample_rate) as f32 / self.sample_rate as f32,
-			);
-
 		let frame = self.start_time.subsec_samples(self.sample_rate) / self.length;
 
-		let (hours, minutes, seconds, microseconds) = start_time_utc.time().as_hms_micro();
+		let (year, month, day, hours, minutes, seconds, microseconds) = self.start_time.to_date_time(self.sample_rate);
 
 		let mut buf = String::new();
 		writeln!(&mut buf, "<OpenPMU>")?;
 		writeln!(&mut buf, "\t<Format>Samples</Format>")?;
-		writeln!(&mut buf, "\t<Date>{}</Date>", start_time_utc.date())?;
+		writeln!(&mut buf, "\t<Date>{year:04}-{month:02}-{day:02}</Date>")?;
 		writeln!(
 			&mut buf,
 			"\t<Time>{hours:02}:{minutes:02}:{seconds:02}.{microseconds:06}</Time>"
