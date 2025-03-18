@@ -7,7 +7,7 @@ use clap::Parser;
 use mu_rust::{
 	ethernet::EthernetSocket,
 	parse,
-	sample_buffer::{sender_thread_fn, SampleBufferQueue},
+	sample_buffer::{SampleBufferQueue, sender_thread_fn},
 };
 
 #[derive(Debug, Parser)]
@@ -32,10 +32,13 @@ fn main() -> anyhow::Result<()> {
 		(None, 4000 | 12800) => 50,
 		(None, 4800 | 15360) => 60,
 		_ => {
-			log::error!("Unable to guess nominal frequency from the sample rate ({} Hz).", args.sample_rate);
+			log::error!(
+				"Unable to guess nominal frequency from the sample rate ({} Hz).",
+				args.sample_rate,
+			);
 			log::error!("The nominal frequency can be specified using the `--nominal-freq` option.");
 			std::process::exit(1);
-		},
+		}
 	};
 
 	if args.nominal_freq.is_none() {

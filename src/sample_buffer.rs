@@ -3,8 +3,8 @@ use std::{
 	fmt::Write,
 	net::{SocketAddr, UdpSocket},
 	sync::{
-		atomic::{AtomicBool, Ordering},
 		Condvar, Mutex,
+		atomic::{AtomicBool, Ordering},
 	},
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,7 +13,7 @@ use base64::Engine;
 
 use crate::{Asdu, Sample};
 
-const NS_PER_SEC: f64 = 1_000_000_000.0;
+const NS_PER_SEC: u64 = 1_000_000_000;
 
 // TODO: Terminology is somewhat inconsistent e.g. 'buffer' refers to both the buffer field in SampleBufferChannel and
 //       the SampleBuffer struct (which contains several channels).
@@ -42,6 +42,11 @@ impl SampleTime {
 		Self(seconds * sample_rate as u64 + samples as u64)
 	}
 
+	/// Creates a new `SampleTime` from the specified number of seconds and nanoseconds since the Unix epoch.
+	pub fn from_seconds_and_nanoseconds(seconds: u64, nanoseconds: u32, sample_rate: u32) -> Self {
+		Self(seconds * sample_rate as u64 + nanoseconds as u64 * sample_rate as u64 / NS_PER_SEC)
+	}
+
 	/// Gets the number of whole seconds since the Unix epoch, assuming the specified number of samples per second.
 	pub fn as_secs(self, sample_rate: u32) -> u64 {
 		self.0 / sample_rate as u64
@@ -61,6 +66,11 @@ impl SampleTime {
 	/// Returns the number of seconds since the Unix epoch, including the fractional portion, as an `f64`.
 	pub fn as_secs_f64(self, sample_rate: u32) -> f64 {
 		self.0 as f64 / sample_rate as f64
+	}
+
+	/// Calculate the start time of the buffer that this sample corresponds to for the given buffer length.
+	pub fn buffer_start_time(self, buffer_length: u32) -> Self {
+		Self(self.0 - (self.0 % buffer_length as u64))
 	}
 
 	/// Converts this timestamp into a Gregorian calendar date and time. Returns a tuple containing the year, month,
@@ -101,7 +111,15 @@ impl SampleTime {
 
 		let microseconds = ((self.0 % sample_rate as u64) as f32 / sample_rate as f32 * 1_000_000.0) as u32;
 
-		(year as u32, month as u32, day as u32, hours, minutes, seconds, microseconds)
+		(
+			year as u32,
+			month as u32,
+			day as u32,
+			hours,
+			minutes,
+			seconds,
+			microseconds,
+		)
 	}
 }
 
@@ -111,6 +129,7 @@ fn is_gregorian_leap_year(year: u64) -> bool {
 
 /// Converts a date in the Gregorian calendar to the number of days since 0001-01-01 in the proleptic Gregorian
 /// calendar.
+#[rustfmt::skip]
 fn fixed_from_gregorian(year: u64, month: u64, day: u64) -> u64 {
 	365 * (year - 1)
 		+ (year - 1) / 4
@@ -150,7 +169,7 @@ impl SampleBufferChannel {
 	}
 }
 
-const SEND_DELAY: f64 = 0.005;
+const SEND_DELAY: f64 = 0.05;
 
 /// A struct containing sample data corresponding to a particular period of time.
 #[derive(Debug)]
@@ -161,20 +180,24 @@ pub struct SampleBuffer {
 	sample_rate: u32,
 	/// The timestamp corresponding to the first sample in the buffer.
 	start_time: SampleTime,
+	/// The time at which this buffer was created. This is used for calculating the time at which to send the buffer,
+	/// since it accounts for network latency.
+	creation_time: SampleTime,
 	/// The number of samples in the buffer. The buffer's end time can be calculated by multiplying this number by
 	/// `sample_rate`.
 	length: u32,
 }
 
 impl SampleBuffer {
-	/// Creates a new sample buffer with the specified start time, length and sample rate. All samples are initialised
-	/// to zero.
-	pub fn new(sample_rate: u32, start_time: SampleTime, length: u32) -> Self {
+	/// Creates a new sample buffer with the specified start time, creation time, length and sample rate. All samples
+	/// are initialised to zero.
+	pub fn new(sample_rate: u32, start_time: SampleTime, creation_time: SampleTime, length: u32) -> Self {
 		let channels = std::array::from_fn(|_| SampleBufferChannel::new(length as usize));
 		Self {
 			channels,
 			sample_rate,
 			start_time,
+			creation_time,
 			length,
 		}
 	}
@@ -272,7 +295,10 @@ impl SampleBuffer {
 
 	/// Calculates the time at which this buffer should be sent.
 	pub fn get_send_time(&self) -> f64 {
-		self.start_time.add_samples(self.length).as_secs_f64(self.sample_rate) + SEND_DELAY
+		self.creation_time
+			.add_samples(self.length)
+			.as_secs_f64(self.sample_rate)
+			+ SEND_DELAY
 	}
 }
 
@@ -290,20 +316,19 @@ impl SampleBufferQueue {
 
 	pub fn insert_sample(
 		&self,
-		mut recv_time_s: u64,
-		recv_time_ns: u32,
+		recv_time_sec: u64,
+		recv_time_nsec: u32,
 		sample_rate: u32,
 		buffer_length: u32,
 		asdu: Asdu,
 	) {
-		let ns_per_sample = NS_PER_SEC / sample_rate as f64;
-		let ns_offset = asdu.smp_cnt as f64 * ns_per_sample;
+		let sample_time_sec = if asdu.smp_cnt as u64 * NS_PER_SEC > recv_time_nsec as u64 * sample_rate as u64 {
+			recv_time_sec - 1
+		} else {
+			recv_time_sec
+		};
 
-		if ns_offset >= recv_time_ns as f64 {
-			recv_time_s -= 1;
-		}
-
-		let timestamp = SampleTime::from_seconds_and_samples(recv_time_s, asdu.smp_cnt as u32, sample_rate);
+		let timestamp = SampleTime::from_seconds_and_samples(sample_time_sec, asdu.smp_cnt as u32, sample_rate);
 
 		let mut queue = self.queue.lock().expect("queue mutex was poisoned");
 
@@ -313,11 +338,8 @@ impl SampleBufferQueue {
 		{
 			let mut new_buffer = SampleBuffer::new(
 				sample_rate,
-				SampleTime::from_seconds_and_samples(
-					recv_time_s,
-					asdu.smp_cnt as u32 / buffer_length * buffer_length,
-					sample_rate,
-				),
+				timestamp.buffer_start_time(buffer_length),
+				SampleTime::from_seconds_and_nanoseconds(recv_time_sec, recv_time_nsec, sample_rate),
 				buffer_length,
 			);
 			new_buffer.insert_sample(asdu.smp_cnt as u32, asdu.sample);
@@ -374,28 +396,3 @@ pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket, dest: 
 		buffer.flush(&out_socket, dest).unwrap();
 	}
 }
-
-// #[cfg(test)]
-// mod tests {
-// 	use super::*;
-
-// 	#[test]
-// 	fn smp_cnt_out_of_range() {
-// 		let socket = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
-// 		let mut sample_buffer_manager = SampleBufferManager::new(4000, 40, socket);
-
-// 		let asdu = Asdu {
-// 			svid: "4000".into(),
-// 			datset: None,
-// 			smp_cnt: 4000,
-// 			conf_rev: 0,
-// 			refr_tm: None,
-// 			smp_synch: 0,
-// 			smp_rate: None,
-// 			sample: Sample::default(),
-// 			smp_mod: None,
-// 		};
-
-// 		sample_buffer_manager.insert_sample(1_000_000_000, 156255, asdu);
-// 	}
-// }

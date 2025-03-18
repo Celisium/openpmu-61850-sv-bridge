@@ -4,7 +4,7 @@ use libfuzzer_sys::{
 	arbitrary::{Arbitrary, Unstructured},
 	fuzz_target,
 };
-use mu_rust::{sample_buffer::SampleBufferQueue, Asdu, Sample};
+use mu_rust::{Asdu, Sample, sample_buffer::SampleBufferQueue};
 
 #[derive(Debug)]
 struct AsduWrapper(Asdu);
