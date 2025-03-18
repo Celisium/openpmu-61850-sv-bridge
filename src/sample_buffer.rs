@@ -10,6 +10,7 @@ use std::{
 };
 
 use base64::Engine;
+use thiserror::Error;
 
 use crate::{Asdu, Sample};
 
@@ -171,6 +172,14 @@ impl SampleBufferChannel {
 
 const SEND_DELAY: f64 = 0.05;
 
+#[derive(Debug, Error)]
+pub enum BufferFlushError {
+	#[error(transparent)]
+	Format(#[from] std::fmt::Error),
+	#[error(transparent)]
+	Io(#[from] std::io::Error),
+}
+
 /// A struct containing sample data corresponding to a particular period of time.
 #[derive(Debug)]
 pub struct SampleBuffer {
@@ -218,8 +227,7 @@ impl SampleBuffer {
 	}
 
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
-	/// TODO: Specific error type.
-	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr) -> anyhow::Result<()> {
+	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr) -> Result<(), BufferFlushError> {
 		let frame = self.start_time.subsec_samples(self.sample_rate) / self.length;
 
 		let (year, month, day, hours, minutes, seconds, microseconds) = self.start_time.to_date_time(self.sample_rate);
@@ -245,7 +253,7 @@ impl SampleBuffer {
 			type_: &str,
 			phase: &str,
 			channel: &SampleBufferChannel,
-		) -> anyhow::Result<()> {
+		) -> Result<(), BufferFlushError> {
 			writeln!(buf, "\t<Channel_{index}>")?;
 			writeln!(buf, "\t\t<Name>{name}</Name>")?;
 			writeln!(buf, "\t\t<Type>{type_}</Type>")?;
