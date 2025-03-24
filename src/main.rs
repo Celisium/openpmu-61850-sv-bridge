@@ -1,6 +1,7 @@
 use std::{
 	ffi::OsString,
 	net::{Ipv4Addr, SocketAddr, UdpSocket},
+	path::PathBuf,
 };
 
 use clap::Parser;
@@ -12,6 +13,8 @@ use mu_rust::{
 
 #[derive(Debug, Parser)]
 struct CommandLineArgs {
+	#[arg(short, long)]
+	config: Option<PathBuf>,
 	#[arg(short, long, default_value = "lo")]
 	interface: OsString,
 	#[arg(short = 'r', long, default_value = "4000")]

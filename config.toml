@@ -1,0 +1,39 @@
+nominal_frequency = 50
+sample_rate = 4000
+interface = "eno1"
+
+[[output_channel]]
+name = "Belfast_Va"
+type = "voltage"
+phase = "a"
+input_channel = 4
+
+[[output_channel]]
+name = "Belfast_Vb"
+type = "voltage"
+phase = "b"
+input_channel = 5
+
+[[output_channel]]
+name = "Belfast_Vc"
+type = "voltage"
+phase = "c"
+input_channel = 6
+
+[[output_channel]]
+name = "Belfast_Ia"
+type = "current"
+phase = "a"
+input_channel = 0
+
+[[output_channel]]
+name = "Belfast_Ib"
+type = "current"
+phase = "b"
+input_channel = 1
+
+[[output_channel]]
+name = "Belfast_Ic"
+type = "current"
+phase = "c"
+input_channel = 2

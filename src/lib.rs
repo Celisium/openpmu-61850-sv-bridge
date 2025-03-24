@@ -1,5 +1,6 @@
 mod ber;
 mod bytes;
+pub mod config;
 pub mod ethernet;
 pub mod sample_buffer;
 
