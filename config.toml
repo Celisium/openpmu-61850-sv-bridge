@@ -1,6 +1,7 @@
 nominal_frequency = 50
 sample_rate = 4000
 interface = "eno1"
+destination = "127.0.0.1:48001"
 
 [[output_channel]]
 name = "Belfast_Va"

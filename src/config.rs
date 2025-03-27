@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -23,4 +24,5 @@ pub struct Configuration {
 	pub interface: String,
 	#[serde(rename = "output_channel")]
 	pub channels: Vec<OutputChannel>,
+	pub destination: SocketAddr,
 }
