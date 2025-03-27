@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
 	log::info!("Datagrams will be sent to {}.", &configuration.destination);
 
 	std::thread::scope(|scope| {
-		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, configuration.destination));
+		let _sender_thread = scope.spawn(|| sender_thread_fn(&sample_buffer_queue, send_socket, configuration.destination, &configuration.channels));
 		loop {
 			let info = recv_socket.recv(&mut buf)?;
 			let sv_message = parse(&buf[0..info.length])?;

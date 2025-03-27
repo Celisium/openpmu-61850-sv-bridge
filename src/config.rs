@@ -14,7 +14,7 @@ pub struct OutputChannel {
 	pub phase: String,
 	#[serde(rename = "type")]
 	pub type_: OutputChannelType,
-	pub input_channel: u32,
+	pub input_channel: usize,
 }
 
 #[derive(Deserialize)]

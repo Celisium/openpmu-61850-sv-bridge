@@ -12,7 +12,11 @@ use std::{
 use base64::Engine;
 use thiserror::Error;
 
-use crate::{Asdu, Sample};
+use crate::{
+	config::{OutputChannel, OutputChannelType},
+	Asdu,
+	Sample
+};
 
 const NS_PER_SEC: u64 = 1_000_000_000;
 
@@ -227,7 +231,7 @@ impl SampleBuffer {
 	}
 
 	/// Generates an OpenPMU XML sample datagram and sends it to the specified destination.
-	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr) -> Result<(), BufferFlushError> {
+	pub fn flush(&self, out_skt: &UdpSocket, dest: SocketAddr, channels: &[OutputChannel]) -> Result<(), BufferFlushError> {
 		let frame = self.start_time.subsec_samples(self.sample_rate) / self.length;
 
 		let (year, month, day, hours, minutes, seconds, microseconds) = self.start_time.to_date_time(self.sample_rate);
@@ -244,46 +248,15 @@ impl SampleBuffer {
 		writeln!(&mut buf, "\t<Fs>{}</Fs>", self.sample_rate)?;
 		writeln!(&mut buf, "\t<n>{}</n>", self.length)?;
 		writeln!(&mut buf, "\t<bits>16</bits>")?;
-		writeln!(&mut buf, "\t<Channels>6</Channels>")?;
+		writeln!(&mut buf, "\t<Channels>{}</Channels>", channels.len())?;
 
-		fn build_channel(
-			buf: &mut String,
-			index: usize,
-			name: &str,
-			type_: &str,
-			phase: &str,
-			channel: &SampleBufferChannel,
-		) -> Result<(), BufferFlushError> {
-			writeln!(buf, "\t<Channel_{index}>")?;
-			writeln!(buf, "\t\t<Name>{name}</Name>")?;
-			writeln!(buf, "\t\t<Type>{type_}</Type>")?;
-			writeln!(buf, "\t\t<Phase>{phase}</Phase>")?;
-			writeln!(buf, "\t\t<Range>{}</Range>", channel.max)?;
-
-			let mut channel_bytes_buf = Vec::with_capacity(channel.buffer.len() * 2);
-			if channel.max == 0.0 {
-				channel_bytes_buf.resize(channel.buffer.len() * 2, 0);
-			} else {
-				for &value in &channel.buffer {
-					let converted = (value / channel.max * 32767.0) as i16;
-					channel_bytes_buf.extend(converted.to_be_bytes());
-				}
-			}
-
-			write!(buf, "\t\t<Payload>")?;
-			base64::engine::general_purpose::STANDARD.encode_string(&channel_bytes_buf, buf);
-			writeln!(buf, "</Payload>")?;
-
-			writeln!(buf, "\t</Channel_{index}>")?;
-			Ok(())
+		for (i, channel) in channels.iter().enumerate() {
+			let type_ = match channel.type_ {
+				OutputChannelType::Voltage => "V",
+				OutputChannelType::Current => "I",
+			};
+			write_xml_channel_data(&mut buf, i, &channel.name, type_, &channel.phase, &self.channels[channel.input_channel])?;
 		}
-
-		build_channel(&mut buf, 0, "Belfast_Va", "V", "a", &self.channels[4])?;
-		build_channel(&mut buf, 1, "Belfast_Vb", "V", "b", &self.channels[5])?;
-		build_channel(&mut buf, 2, "Belfast_Vc", "V", "c", &self.channels[6])?;
-		build_channel(&mut buf, 3, "Belfast_Ia", "I", "a", &self.channels[0])?;
-		build_channel(&mut buf, 4, "Belfast_Ib", "I", "b", &self.channels[1])?;
-		build_channel(&mut buf, 5, "Belfast_Ic", "I", "c", &self.channels[2])?;
 
 		writeln!(&mut buf, "</OpenPMU>")?;
 
@@ -308,6 +281,38 @@ impl SampleBuffer {
 			.as_secs_f64(self.sample_rate)
 			+ SEND_DELAY
 	}
+}
+
+fn write_xml_channel_data(
+	buf: &mut String,
+	index: usize,
+	name: &str,
+	type_: &str,
+	phase: &str,
+	channel: &SampleBufferChannel,
+) -> Result<(), BufferFlushError> {
+	writeln!(buf, "\t<Channel_{index}>")?;
+	writeln!(buf, "\t\t<Name>{name}</Name>")?;
+	writeln!(buf, "\t\t<Type>{type_}</Type>")?;
+	writeln!(buf, "\t\t<Phase>{phase}</Phase>")?;
+	writeln!(buf, "\t\t<Range>{}</Range>", channel.max)?;
+
+	let mut channel_bytes_buf = Vec::with_capacity(channel.buffer.len() * 2);
+	if channel.max == 0.0 {
+		channel_bytes_buf.resize(channel.buffer.len() * 2, 0);
+	} else {
+		for &value in &channel.buffer {
+			let converted = (value / channel.max * 32767.0) as i16;
+			channel_bytes_buf.extend(converted.to_be_bytes());
+		}
+	}
+
+	write!(buf, "\t\t<Payload>")?;
+	base64::engine::general_purpose::STANDARD.encode_string(&channel_bytes_buf, buf);
+	writeln!(buf, "</Payload>")?;
+
+	writeln!(buf, "\t</Channel_{index}>")?;
+	Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -394,13 +399,13 @@ impl SampleBufferQueue {
 	}
 }
 
-pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket, dest: SocketAddr) {
+pub fn sender_thread_fn(queue: &SampleBufferQueue, out_socket: UdpSocket, dest: SocketAddr, channels: &[OutputChannel]) {
 	while let Some(sleep_time) = queue.wait_for_sample_buffer() {
 		if sleep_time > 0.0 {
 			std::thread::sleep(Duration::from_secs_f64(sleep_time));
 		}
 
 		let buffer = queue.pop_sample_buffer();
-		buffer.flush(&out_socket, dest).unwrap();
+		buffer.flush(&out_socket, dest, channels).unwrap();
 	}
 }
