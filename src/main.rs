@@ -40,7 +40,8 @@ fn main() -> anyhow::Result<()> {
 		},
 	};
 
-	let recv_socket = EthernetSocket::new(Some(OsStr::new(&configuration.interface)))?;
+	let multicast_addr = [0x01, 0x0C, 0xCD, 0x04, 0x00, 0x01];
+	let recv_socket = EthernetSocket::new(OsStr::new(&configuration.interface), multicast_addr)?;
 
 	log::info!("Bound socket to interface '{}'.", &configuration.interface);
 

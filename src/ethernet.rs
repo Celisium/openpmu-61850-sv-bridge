@@ -6,7 +6,7 @@ use std::{
 	},
 };
 
-/// The value of the Ethertype field used IEC 61850-9-2 sampled value messages.
+/// The value of the EtherType field used IEC 61850-9-2 sampled value messages.
 const ETHERTYPE_SV: u16 = 0x88BA;
 
 /// Obtains the index of the network interface with the given name.
@@ -42,30 +42,31 @@ impl EthernetSocket {
 	///
 	/// If `interface` is `None`, Ethernet frames will be received from all network interfaces. Otherwise, frames will
 	/// only be received on the specified interface.
-	pub fn new(interface: Option<&OsStr>) -> std::io::Result<Self> {
-		let socket = unsafe {
-			libc::socket(
-				// The `AF_PACKET` domain is used for Ethernet frames (see the `packet(7)` man page).
-				libc::AF_PACKET,
-				// For packet sockets, `SOCK_DGRAM` indicates that only the payload should be included.
-				// Other information (such as the source MAC address) can be obtained from `recvmsg` if necessary.
-				libc::SOCK_DGRAM,
-				// Only receive frames with the IEC 61850-9-2 SV Ethertype. `socket` expects this value to be in big
-				// endian.
-				ETHERTYPE_SV.to_be() as c_int,
-			)
-		};
+	pub fn new(interface: &OsStr, source_addr: [u8; 6]) -> std::io::Result<Self> {
+
+		// Create the socket.
+		// - `AF_PACKET` specifies that the socket is for receiving layer 2 frames (see the `packet(7)` man page).
+		// - For packet sockets, `SOCK_DGRAM` indicates that only the payload should be included. We use this type so
+		//   that we don't need to worry about handling VLAN tagging.
+		// - When a packet socket is created, it will receive frames on all network interfaces until it is bound to a
+		//   particular interface using `bind`. In the brief period of time between creating the socket and calling
+		//   `bind`, the socket can still receive frames from other interfaces. To prevent this, we specify 0 as the
+		//   protocol, meaning no frames will be received. The EtherType to filter for is instead passed to `bind`,
+		//   along with the network interface.
+		let socket = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_DGRAM, 0) };
 		// `socket` returns -1 on error, with the error code in `errno`.
 		if socket == -1 {
 			return Err(std::io::Error::last_os_error());
 		}
 
-		let interface_index = interface.map(interface_name_to_index).transpose()?.unwrap_or(0);
+		// Get the numerical index of the network interface from its name.
+		let interface_index = interface_name_to_index(interface)?;
 
+		// Bind the socket such that we only receive frames on the specified interface.
 		let address = libc::sockaddr_ll {
 			sll_family: libc::AF_PACKET as c_ushort, // Always `AF_PACKET`.
-			sll_protocol: ETHERTYPE_SV.to_be(),      // Ethertype can also be specified here, for some reason.
-			sll_ifindex: interface_index as c_int,   // The interface to receive from. For `bind`, 0 means any interface.
+			sll_protocol: ETHERTYPE_SV.to_be(), // Only receive frames with the IEC 61850-9-2 SV EtherType.
+			sll_ifindex: interface_index as c_int, // The numerical index of the interface to receive from.
 			// Remaining fields are not used for `bind`.
 			sll_hatype: 0,
 			sll_pkttype: 0,
@@ -73,7 +74,6 @@ impl EthernetSocket {
 			sll_addr: [0; 8],
 		};
 
-		// Bind the socket such that we only receive frames on the specified interface.
 		let result = unsafe {
 			libc::bind(
 				socket,
@@ -100,6 +100,27 @@ impl EthernetSocket {
 			)
 		};
 		// `setsockopt` returns -1 on error, with the error code in `errno`.
+		if result == -1 {
+			return Err(std::io::Error::last_os_error());
+		}
+
+		// Configure the network interface to receive frames with the specified multicast destination address.
+		let mreq = libc::packet_mreq {
+			mr_ifindex: interface_index as c_int,
+			mr_type: libc::PACKET_MR_MULTICAST as c_ushort,
+			mr_alen: 6,
+			mr_address: std::array::from_fn(|i| source_addr.get(i).cloned().unwrap_or(0)),
+		};
+
+		let result = unsafe {
+			libc::setsockopt(
+				socket,
+				libc::SOL_PACKET,
+				libc::PACKET_ADD_MEMBERSHIP,
+				&raw const mreq as *const c_void,
+				size_of::<libc::packet_mreq>() as libc::socklen_t,
+			)
+		};
 		if result == -1 {
 			return Err(std::io::Error::last_os_error());
 		}
