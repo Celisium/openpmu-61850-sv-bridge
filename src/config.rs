@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use serde::Deserialize;
 
+use crate::ethernet::MacAddress;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputChannelType {
@@ -25,4 +27,5 @@ pub struct Configuration {
 	#[serde(rename = "output_channel")]
 	pub channels: Vec<OutputChannel>,
 	pub destination: SocketAddr,
+	pub mac_address: MacAddress,
 }

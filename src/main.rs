@@ -50,10 +50,10 @@ fn main() -> Result<(), MainError> {
 		},
 	};
 
-	let multicast_addr = [0x01, 0x0C, 0xCD, 0x04, 0x00, 0x01];
-	let recv_socket = EthernetSocket::new(OsStr::new(&configuration.interface), multicast_addr)?;
+	let recv_socket = EthernetSocket::new(OsStr::new(&configuration.interface), configuration.mac_address)?;
 
 	log::info!("Bound socket to interface '{}'.", &configuration.interface);
+	log::info!("Multicast address is '{}'.", &configuration.mac_address);
 
 	let mut buf = [0_u8; 1522]; // The maximum size of an Ethernet frame is 1522 bytes.
 

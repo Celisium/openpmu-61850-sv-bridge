@@ -1,10 +1,61 @@
 use std::{
-	ffi::{CString, OsStr, c_int, c_longlong, c_uint, c_ushort, c_void},
+	ffi::{c_int, c_longlong, c_uint, c_ushort, c_void, CString, OsStr},
 	os::{
 		fd::{AsRawFd, FromRawFd, OwnedFd},
 		unix::ffi::OsStrExt,
 	},
 };
+
+use serde::Deserialize;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(try_from = "String")]
+pub struct MacAddress([u8; 6]);
+
+impl MacAddress {
+	pub fn to_bytes(self) -> [u8; 6] {
+		self.0
+	}
+}
+
+#[derive(Debug, Error)]
+#[error("invalid MAC address syntax")]
+pub struct MacAddressParseError;
+
+impl TryFrom<String> for MacAddress {
+	type Error = MacAddressParseError;
+	fn try_from(s: String) -> Result<Self, Self::Error> {
+		let mut addr_bytes = [0; 6];
+		let mut octet_str_iter = s.split(['-', ':']);
+
+		for i in 0..6 {
+			let octet_str = octet_str_iter.next().ok_or(MacAddressParseError)?;
+			if octet_str.len() != 2 {
+				return Err(MacAddressParseError);
+			}
+			addr_bytes[i] = u8::from_str_radix(octet_str, 16).map_err(|_| MacAddressParseError)?;
+		}
+
+		if octet_str_iter.next().is_some() {
+			Err(MacAddressParseError)
+		} else {
+			Ok(MacAddress(addr_bytes))
+		}
+	}
+}
+
+impl std::fmt::Display for MacAddress {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		for i in 0..6 {
+			write!(f, "{:02X}", self.0[i])?;
+			if i != 5 {
+				write!(f, "-")?;
+			}
+		}
+		Ok(())
+	}
+}
 
 /// The value of the EtherType field used IEC 61850-9-2 sampled value messages.
 const ETHERTYPE_SV: u16 = 0x88BA;
@@ -42,7 +93,7 @@ impl EthernetSocket {
 	///
 	/// If `interface` is `None`, Ethernet frames will be received from all network interfaces. Otherwise, frames will
 	/// only be received on the specified interface.
-	pub fn new(interface: &OsStr, source_addr: [u8; 6]) -> std::io::Result<Self> {
+	pub fn new(interface: &OsStr, source_addr: MacAddress) -> std::io::Result<Self> {
 
 		// Create the socket.
 		// - `AF_PACKET` specifies that the socket is for receiving layer 2 frames (see the `packet(7)` man page).
@@ -109,7 +160,7 @@ impl EthernetSocket {
 			mr_ifindex: interface_index as c_int,
 			mr_type: libc::PACKET_MR_MULTICAST as c_ushort,
 			mr_alen: 6,
-			mr_address: std::array::from_fn(|i| source_addr.get(i).cloned().unwrap_or(0)),
+			mr_address: std::array::from_fn(|i| source_addr.to_bytes().get(i).cloned().unwrap_or(0)),
 		};
 
 		let result = unsafe {
