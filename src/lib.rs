@@ -4,8 +4,10 @@ pub mod config;
 pub mod ethernet;
 pub mod sample_buffer;
 
-use ber::{DecodeError, Encoding, Tag};
+use ber::{Encoding, Tag};
 use bytes::BytesReader;
+
+pub use ber::DecodeError;
 
 fn read_iec61850_int8u(reader: &mut BytesReader<'_>, encoding: Encoding) -> Result<u8, DecodeError> {
 	if let &[b_0] = ber::read_octet_string(reader, encoding)? {
@@ -188,7 +190,7 @@ pub struct SvMessage {
 	pub asdus: Vec<Asdu>,
 }
 
-pub fn parse(bytes: &[u8]) -> anyhow::Result<SvMessage> {
+pub fn parse(bytes: &[u8]) -> Result<SvMessage, DecodeError> {
 	let mut reader = BytesReader::new(bytes);
 
 	let appid = reader.read_u16_be()?;

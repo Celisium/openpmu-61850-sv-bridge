@@ -9,8 +9,10 @@ use mu_rust::{
 	config::Configuration,
 	ethernet::EthernetSocket,
 	parse,
-	sample_buffer::{SampleBufferQueue, sender_thread_fn},
+	sample_buffer::{sender_thread_fn, SampleBufferQueue},
+	DecodeError,
 };
+use thiserror::Error;
 
 #[derive(Debug, Parser)]
 struct CommandLineArgs {
@@ -18,7 +20,15 @@ struct CommandLineArgs {
 	config: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Debug, Error)]
+enum MainError {
+	#[error(transparent)]
+	Io(#[from] std::io::Error),
+	#[error(transparent)]
+	Decode(#[from] DecodeError),
+}
+
+fn main() -> Result<(), MainError> {
 	let env = env_logger::Env::default().default_filter_or("info");
 	env_logger::init_from_env(env);
 
